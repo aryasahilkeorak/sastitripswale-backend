@@ -7,7 +7,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import User from '../models/User.js';
 import { issueTokenPair, verifyRefreshToken, sha256 } from '../utils/jwt.js';
-import { fileToUrl } from '../middleware/upload.js';
+import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray } from '../utils/parse.js';
 import { notify } from '../utils/notify.js';
 import { sendWelcomeEmail, sendPasswordResetEmail } from '../utils/email.js';
@@ -42,7 +42,7 @@ export const register = asyncHandler(async (req, res) => {
     travelInterests: parseArray(b.travelInterests),
   });
   await user.setPassword(b.password);
-  if (req.file) user.avatarUrl = fileToUrl(req.file);
+  if (req.file) user.avatarUrl = await saveUpload(req.file, { owner: user._id, kind: 'avatar' });
 
   const pair = issueTokenPair(user);
   user.refreshTokenHash = pair.refreshTokenHash;

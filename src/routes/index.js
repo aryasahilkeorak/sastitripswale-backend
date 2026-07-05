@@ -8,10 +8,13 @@ import reviewRoutes from './reviewRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import contactRoutes from './contactRoutes.js';
 import chatRoutes from './chatRoutes.js';
+import { getPublicStats } from '../controllers/statsController.js';
 import { razorpayEnabled } from '../utils/razorpay.js';
 import { env } from '../config/env.js';
 
 const router = Router();
+
+router.get('/stats', getPublicStats);
 
 router.get('/health', (req, res) => {
   res.json({

@@ -11,11 +11,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // backend/.env  (this file lives in backend/src/config)
-// override: true → values in .env win over any pre-existing shell env vars.
-// Safe for deployment: hosts (Railway/Render/etc.) have no committed .env file,
-// so their dashboard-provided vars are still used. This prevents a stray global
-// var (e.g. a leftover MONGODB_URI) from silently overriding your local config.
-dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: true });
+// In DEVELOPMENT: override so your local .env wins over stale global shell vars.
+// In PRODUCTION (Render/host): do NOT override — the platform's dashboard env
+// vars must win, even if a .env file was accidentally committed to the repo.
+dotenv.config({
+  path: path.resolve(__dirname, '../../.env'),
+  override: process.env.NODE_ENV !== 'production',
+});
 
 const bool = (v) => String(v).toLowerCase() === 'true';
 const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);

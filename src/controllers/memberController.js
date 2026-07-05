@@ -10,7 +10,7 @@ import Trip from '../models/Trip.js';
 import Connection from '../models/Connection.js';
 import Notification from '../models/Notification.js';
 import Document from '../models/Document.js';
-import { fileToUrl } from '../middleware/upload.js';
+import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray, pick } from '../utils/parse.js';
 import { notify } from '../utils/notify.js';
 
@@ -125,7 +125,7 @@ export const updateProfile = asyncHandler(async (req, res) => {
   if (req.body.hasVehicle !== undefined) user.hasVehicle = toBool(req.body.hasVehicle);
   if (req.body.travelInterests !== undefined) user.travelInterests = parseArray(req.body.travelInterests);
   if (req.body.emergencyContact !== undefined) user.emergencyContact = req.body.emergencyContact;
-  if (req.file) user.avatarUrl = fileToUrl(req.file);
+  if (req.file) user.avatarUrl = await saveUpload(req.file, { owner: user._id, kind: 'avatar' });
 
   await user.save();
   res.json({ success: true, user: user.toPrivateJSON() });
@@ -145,13 +145,14 @@ export const completeProfile = asyncHandler(async (req, res) => {
   if (b.coTravelerPreference) user.coTravelerPreference = b.coTravelerPreference;
 
   const files = req.files || {};
-  if (files.avatar?.[0]) user.avatarUrl = fileToUrl(files.avatar[0]);
+  if (files.avatar?.[0]) user.avatarUrl = await saveUpload(files.avatar[0], { owner: user._id, kind: 'avatar' });
 
   const docsToSave = [];
   if (files.aadhaar?.[0]) docsToSave.push({ docType: 'aadhaar', file: files.aadhaar[0] });
   if (files.pan?.[0]) docsToSave.push({ docType: 'pan', file: files.pan[0] });
   for (const d of docsToSave) {
-    await Document.create({ user: user._id, docType: d.docType, fileUrl: fileToUrl(d.file) });
+    const fileUrl = await saveUpload(d.file, { owner: user._id, kind: 'document' });
+    await Document.create({ user: user._id, docType: d.docType, fileUrl });
   }
 
   // Validate everything required for a complete profile.
@@ -173,10 +174,11 @@ export const completeProfile = asyncHandler(async (req, res) => {
 export const uploadDocument = asyncHandler(async (req, res) => {
   if (!req.file) throw ApiError.badRequest('Document file required');
   const docType = req.body.docType || 'aadhaar';
+  const fileUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'document' });
   const doc = await Document.create({
     user: req.user._id,
     docType,
-    fileUrl: fileToUrl(req.file),
+    fileUrl,
   });
   res.status(201).json({ success: true, document: { id: doc._id, docType: doc.docType } });
 });

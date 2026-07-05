@@ -9,7 +9,7 @@ import Gallery from '../models/Gallery.js';
 import User from '../models/User.js';
 import Group from '../models/Group.js';
 import Message from '../models/Message.js';
-import { fileToUrl } from '../middleware/upload.js';
+import { saveUpload } from '../utils/uploadStore.js';
 import { notify } from '../utils/notify.js';
 import { sendTripInterestEmail } from '../utils/email.js';
 import { pick } from '../utils/parse.js';
@@ -134,7 +134,7 @@ const CREATE_FIELDS = [
 export const createTrip = asyncHandler(async (req, res) => {
   const payload = pick(req.body, CREATE_FIELDS);
   const trip = new Trip({ ...payload, organizer: req.user._id });
-  if (req.file) trip.coverImageUrl = fileToUrl(req.file);
+  if (req.file) trip.coverImageUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'trip' });
   await trip.save();
 
   // Auto-create the trip chat group with the organizer as owner/member.
@@ -154,11 +154,11 @@ export const updateTrip = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.id);
   if (!trip) throw ApiError.notFound('Trip not found');
   const isOwner = String(trip.organizer) === String(req.user._id);
-  if (!isOwner && req.user.role !== 'admin') throw ApiError.forbidden('Not allowed');
+  if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Not allowed');
 
   const payload = pick(req.body, [...CREATE_FIELDS, 'status', 'filledSeats']);
   Object.assign(trip, payload);
-  if (req.file) trip.coverImageUrl = fileToUrl(req.file);
+  if (req.file) trip.coverImageUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'trip' });
   await trip.save();
   res.json({ success: true, trip: trip.toJSON() });
 });
@@ -167,7 +167,7 @@ export const deleteTrip = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.id);
   if (!trip) throw ApiError.notFound('Trip not found');
   const isOwner = String(trip.organizer) === String(req.user._id);
-  if (!isOwner && req.user.role !== 'admin') throw ApiError.forbidden('Not allowed');
+  if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Not allowed');
 
   const grp = await Group.findOne({ trip: trip._id });
   await Promise.all([
@@ -233,10 +233,11 @@ export const uploadTripPhoto = asyncHandler(async (req, res) => {
   if (!trip) throw ApiError.notFound('Trip not found');
   if (!req.file) throw ApiError.badRequest('Photo file required');
 
+  const photoUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'trip' });
   const photo = await Gallery.create({
     user: req.user._id,
     trip: trip._id,
-    photoUrl: fileToUrl(req.file),
+    photoUrl,
     caption: req.body.caption || trip.destination,
     category: req.body.category || trip.tripType || 'group',
   });
@@ -247,7 +248,7 @@ export const addExpense = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.id);
   if (!trip) throw ApiError.notFound('Trip not found');
   const isOwner = String(trip.organizer) === String(req.user._id);
-  if (!isOwner && req.user.role !== 'admin') throw ApiError.forbidden('Not allowed');
+  if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Not allowed');
 
   trip.expenses.push({
     category: req.body.category,
