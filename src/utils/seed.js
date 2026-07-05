@@ -20,6 +20,7 @@ import Document from '../models/Document.js';
 import ContactMessage from '../models/ContactMessage.js';
 import Group from '../models/Group.js';
 import Message from '../models/Message.js';
+import Upload from '../models/Upload.js';
 
 const avatar = (n) => `https://i.pravatar.cc/400?img=${n}`;
 const cover = (seed) => `https://picsum.photos/seed/${seed}/900/560`;
@@ -53,6 +54,7 @@ async function wipe() {
     ContactMessage.deleteMany({}),
     Group.deleteMany({}),
     Message.deleteMany({}),
+    Upload.deleteMany({}),
   ]);
   console.log('🧹 Collections cleared');
 }
@@ -60,13 +62,13 @@ async function wipe() {
 async function seed() {
   await wipe();
 
-  // --- Admin ---
+  // --- Super Admin ---
   const admin = await makeUser(
     {
-      fullName: 'STW Admin',
+      fullName: 'STW Super Admin',
       email: env.seed.adminEmail,
       mobile: '9000000001',
-      role: 'admin',
+      role: 'superadmin',
       city: 'Delhi',
       state: 'Delhi',
       isVerified: true,
@@ -75,6 +77,23 @@ async function seed() {
       avatarUrl: avatar(12),
     },
     env.seed.adminPassword
+  );
+
+  // --- Demo staff admin (non-super) ---
+  await makeUser(
+    {
+      fullName: 'STW Staff Admin',
+      email: 'staff@sastitripwale.com',
+      mobile: '9000000005',
+      role: 'admin',
+      city: 'Mumbai',
+      state: 'Maharashtra',
+      isVerified: true,
+      membershipPaid: true,
+      membershipPaidAt: new Date(),
+      avatarUrl: avatar(20),
+    },
+    'Admin@123'
   );
 
   // --- Members ---
@@ -338,7 +357,8 @@ async function seed() {
   ]);
 
   console.log('\n✅ Seed complete');
-  console.log('   Admin :', env.seed.adminEmail, '/', env.seed.adminPassword);
+  console.log('   Super Admin:', env.seed.adminEmail, '/', env.seed.adminPassword);
+  console.log('   Staff Admin: staff@sastitripwale.com / Admin@123');
   console.log('   Member: rahul@example.com / Travel@123');
   console.log('   Member: priya@example.com / Travel@123');
   console.log('   Member: arjun@example.com / Travel@123');

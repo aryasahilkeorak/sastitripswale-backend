@@ -8,17 +8,12 @@ import morgan from 'morgan';
 import compression from 'compression';
 import mongoSanitize from 'express-mongo-sanitize';
 import hpp from 'hpp';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { env } from './config/env.js';
 import apiRoutes from './routes/index.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import { generalLimiter } from './middleware/rateLimiters.js';
-import { UPLOAD_ROOT } from './middleware/upload.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { getFile } from './controllers/fileController.js';
 
 const app = express();
 
@@ -35,8 +30,20 @@ app.use(
 );
 
 // --- CORS (restricted to configured frontends) ---
+// Normalise once so "https://x/" and "https://x" compare equal.
+const allowedOrigins = env.frontendUrls.map((o) => o.replace(/\/+$/, ''));
 app.use(
-  cors()
+  cors({
+    origin(origin, cb) {
+      // No origin header = curl / server-to-server / mobile app → allow.
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin.replace(/\/+$/, ''))) return cb(null, true);
+      // Deny cleanly — return false instead of throwing, so a blocked origin
+      // gets a normal CORS rejection, NOT a 500 on the preflight.
+      return cb(null, false);
+    },
+    credentials: true,
+  })
 );
 
 // --- Body parsing (capture raw body for webhook signature checks) ---
@@ -58,14 +65,9 @@ app.use(hpp());
 app.use(compression());
 app.use(morgan(env.isProd ? 'combined' : 'dev'));
 
-// --- Static: uploaded files (images/docs stored on this backend) ---
-app.use(
-  `/${env.upload.dir}`,
-  express.static(UPLOAD_ROOT, {
-    maxAge: '7d',
-    setHeaders: (res) => res.set('Cross-Origin-Resource-Policy', 'cross-origin'),
-  })
-);
+// --- Uploaded files (stored in MongoDB) — outside the rate limiter so image
+//     heavy pages don't get throttled. ---
+app.get('/api/files/:id', getFile);
 
 // --- API ---
 app.use('/api', generalLimiter, apiRoutes);

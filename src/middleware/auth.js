@@ -67,7 +67,7 @@ export const requireMembership = (req, res, next) => {
 // (name, city, interests, vehicle info, ID document).
 export const requireProfileComplete = (req, res, next) => {
   if (!req.user) return next(ApiError.unauthorized());
-  if (req.user.role === 'admin') return next();
+  if (req.user.role === 'admin' || req.user.role === 'superadmin') return next();
   if (!req.user.profileComplete) {
     return next(ApiError.forbidden('Complete your profile to plan or join trips', 'PROFILE_INCOMPLETE'));
   }

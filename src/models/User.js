@@ -24,7 +24,7 @@ const userSchema = new Schema(
 
     passwordHash: { type: String, required: true, select: false },
 
-    role: { type: String, enum: ['member', 'admin'], default: 'member', index: true },
+    role: { type: String, enum: ['member', 'admin', 'superadmin'], default: 'member', index: true },
 
     gender: { type: String, enum: ['Male', 'Female', 'Prefer not to say', ''], default: '' },
     age: { type: Number, min: 18, max: 100 },
@@ -83,7 +83,7 @@ userSchema.methods.comparePassword = async function comparePassword(plain) {
 
 // Membership is active if paid and not expired.
 userSchema.methods.hasActiveMembership = function hasActiveMembership() {
-  if (this.role === 'admin') return true;
+  if (this.role === 'admin' || this.role === 'superadmin') return true;
   if (!this.membershipPaid) return false;
   if (this.membershipExpiresAt && this.membershipExpiresAt.getTime() < Date.now()) return false;
   return true;
