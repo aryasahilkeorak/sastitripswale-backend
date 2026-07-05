@@ -36,14 +36,7 @@ app.use(
 
 // --- CORS (restricted to configured frontends) ---
 app.use(
-  cors({
-    origin(origin, cb) {
-      // allow same-origin / curl / mobile apps (no origin) and whitelisted origins
-      if (!origin || env.frontendUrls.includes(origin)) return cb(null, true);
-      cb(new Error(`CORS: origin ${origin} not allowed`));
-    },
-    credentials: true,
-  })
+  cors()
 );
 
 // --- Body parsing (capture raw body for webhook signature checks) ---
