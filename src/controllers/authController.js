@@ -50,7 +50,7 @@ export const register = asyncHandler(async (req, res) => {
 
   notify(user._id, {
     type: 'welcome',
-    title: 'Welcome to SastiTripWale! 🔥',
+    title: 'Welcome to SastiTripWale!',
     message: 'Complete your membership and start exploring trips.',
   });
   sendWelcomeEmail(user).catch(() => {});
@@ -116,6 +116,24 @@ export const refresh = asyncHandler(async (req, res) => {
   await user.save();
 
   res.json({ success: true, accessToken: pair.accessToken, refreshToken: pair.refreshToken });
+});
+
+export const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    throw ApiError.badRequest('Current and new password are required');
+  }
+  if (String(newPassword).length < 6) {
+    throw ApiError.badRequest('New password must be at least 6 characters');
+  }
+
+  const user = await User.findById(req.user._id).select('+passwordHash');
+  const ok = await user.comparePassword(currentPassword);
+  if (!ok) throw ApiError.unauthorized('Current password is incorrect');
+
+  await user.setPassword(newPassword);
+  await user.save();
+  res.json({ success: true, message: 'Password updated' });
 });
 
 export const logout = asyncHandler(async (req, res) => {

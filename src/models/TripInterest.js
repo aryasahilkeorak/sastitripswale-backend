@@ -6,7 +6,8 @@ const tripInterestSchema = new Schema(
   {
     trip: { type: Schema.Types.ObjectId, ref: 'Trip', required: true, index: true },
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    status: { type: String, enum: ['interested', 'joined', 'left'], default: 'interested' },
+    status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+    isCouple: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

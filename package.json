@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/utils/seed.js",
-    "seed:destroy": "node src/utils/seed.js --destroy"
+    "seed:destroy": "node src/utils/seed.js --destroy",
+    "seed:demo": "node src/utils/seedDemoAdd.js"
   },
   "engines": {
     "node": ">=18"

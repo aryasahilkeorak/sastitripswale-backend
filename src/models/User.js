@@ -21,10 +21,20 @@ const userSchema = new Schema(
     },
     mobile: { type: String, required: true, unique: true, trim: true, maxlength: 15 },
     whatsapp: { type: String, trim: true, maxlength: 15 },
+    // Handle used to find/add this member to chat groups (distinct from the
+    // Mongo _id shown as "User ID" elsewhere). Optional, set from Settings.
+    username: { type: String, trim: true, lowercase: true, maxlength: 30, unique: true, sparse: true },
 
     passwordHash: { type: String, required: true, select: false },
 
     role: { type: String, enum: ['member', 'admin', 'superadmin'], default: 'member', index: true },
+    // Granular access for a plain 'admin' (ignored for 'superadmin', who
+    // always has full access). See utils/permissions.js for the valid keys.
+    permissions: {
+      type: [String],
+      enum: ['users', 'trips', 'coupons', 'reviews', 'messages', 'gallery', 'revenue'],
+      default: [],
+    },
 
     gender: { type: String, enum: ['Male', 'Female', 'Prefer not to say', ''], default: '' },
     age: { type: Number, min: 18, max: 100 },
@@ -33,7 +43,13 @@ const userSchema = new Schema(
     profession: { type: String, trim: true, maxlength: 100 },
     bio: { type: String, maxlength: 1000 },
     avatarUrl: { type: String, default: '' },
+    // Social handles only (no full URLs) — the frontend prefixes the
+    // platform's base URL when rendering a clickable link.
     instagram: { type: String, trim: true },
+    facebook: { type: String, trim: true },
+    twitter: { type: String, trim: true },
+    youtube: { type: String, trim: true },
+    linkedin: { type: String, trim: true },
 
     emergencyContact: { type: String, trim: true, select: false },
 
@@ -48,11 +64,28 @@ const userSchema = new Schema(
     // 'male' = only male, 'female' = only female, 'both' = male + female.
     coTravelerPreference: { type: String, enum: ['male', 'female', 'both', ''], default: '' },
 
+    // Drives whether Couples Mode (partner details, couple trips) is offered.
+    relationshipStatus: {
+      type: String,
+      enum: ['single', 'in_a_relationship', 'married', 'prefer_not_to_say', ''],
+      default: '',
+    },
+
+    // Collected once (in profile, not per-trip) so a couple's safety info
+    // — mobile + gov ID — only ever needs to be uploaded a single time.
+    // Only ever exposed to the user themself and to admins.
+    partnerMobile: { type: String, trim: true, maxlength: 15 },
+    partnerDocUrl: { type: String, default: '' },
+
     isVerified: { type: Boolean, default: false }, // admin sets after doc review
     membershipPaid: { type: Boolean, default: false },
     membershipPaidAt: { type: Date },
     membershipExpiresAt: { type: Date },
     membershipDuration: { type: String, enum: ['6m', '1y', ''], default: '' },
+    // Coupon code applied on the payment that (most recently) activated
+    // membership — kept on the user itself so admin views don't depend on
+    // a Payment record still existing.
+    couponUsed: { type: String, trim: true, uppercase: true, default: '' },
 
     // Full profile (name, city, interests, vehicle, ID doc) collected AFTER
     // payment. Until complete, the user cannot plan or join trips.
@@ -94,6 +127,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
   return {
     id: this._id,
     fullName: this.fullName,
+    username: this.username || '',
     role: this.role,
     gender: this.gender,
     age: this.age,
@@ -103,6 +137,10 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     bio: this.bio,
     avatarUrl: this.avatarUrl,
     instagram: this.instagram,
+    facebook: this.facebook,
+    twitter: this.twitter,
+    youtube: this.youtube,
+    linkedin: this.linkedin,
     hasVehicle: this.hasVehicle,
     vehicleType: this.vehicleType,
     vehicleModel: this.vehicleModel,
@@ -120,6 +158,7 @@ userSchema.methods.toPrivateJSON = function toPrivateJSON() {
     email: this.email,
     mobile: this.mobile,
     whatsapp: this.whatsapp,
+    permissions: this.permissions || [],
     drinks: this.drinks,
     smokes: this.smokes,
     membershipPaid: this.membershipPaid,
@@ -127,6 +166,10 @@ userSchema.methods.toPrivateJSON = function toPrivateJSON() {
     membershipExpiresAt: this.membershipExpiresAt,
     membershipDuration: this.membershipDuration,
     membershipActive: this.hasActiveMembership(),
+    couponUsed: this.couponUsed || '',
+    relationshipStatus: this.relationshipStatus || '',
+    partnerMobile: this.partnerMobile || '',
+    partnerDocUrl: this.partnerDocUrl || '',
     profileComplete: this.profileComplete,
     isActive: this.isActive,
     updatedAt: this.updatedAt,
