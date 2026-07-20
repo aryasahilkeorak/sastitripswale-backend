@@ -18,6 +18,7 @@ router.post('/register', authLimiter, avatarUpload.single('avatar'), registerRul
 router.post('/login', authLimiter, loginRules, validate, auth.login);
 router.post('/refresh', auth.refresh);
 router.post('/logout', protect, auth.logout);
+router.post('/change-password', protect, auth.changePassword);
 router.get('/me', protect, auth.getMe);
 router.post('/forgot-password', authLimiter, forgotRules, validate, auth.forgotPassword);
 router.post('/reset-password', authLimiter, resetRules, validate, auth.resetPassword);

@@ -5,6 +5,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import { verifyAccessToken } from '../utils/jwt.js';
 import User from '../models/User.js';
+import { hasPermission } from '../utils/permissions.js';
 
 export const protect = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
@@ -54,6 +55,16 @@ export const requireRole =
     }
     next();
   };
+
+// Gates a specific admin capability for plain 'admin' accounts — super
+// admins always pass. See utils/permissions.js for valid keys.
+export const requirePermission = (key) => (req, res, next) => {
+  if (!req.user) return next(ApiError.unauthorized());
+  if (!hasPermission(req.user, key)) {
+    return next(ApiError.forbidden(`You don't have permission to manage ${key}`));
+  }
+  next();
+};
 
 export const requireMembership = (req, res, next) => {
   if (!req.user) return next(ApiError.unauthorized());

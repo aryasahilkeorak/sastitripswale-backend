@@ -45,11 +45,23 @@ export const resetRules = [
 ];
 
 export const tripRules = [
+  body('origin').trim().isLength({ min: 2, max: 200 }).withMessage('Starting point required'),
   body('destination').trim().isLength({ min: 2, max: 200 }).withMessage('Destination required'),
+  body('viaStops').optional().isArray({ max: 6 }).withMessage('Up to 6 stops allowed'),
+  body('viaStops.*').trim().isLength({ min: 1, max: 100 }).withMessage('Each stop must be 1-100 characters'),
   body('startDate').isISO8601().withMessage('Valid start date required'),
   body('endDate').isISO8601().withMessage('Valid end date required'),
   body('budgetPerHead').isFloat({ min: 0 }).withMessage('Budget must be a positive number'),
   body('totalSeats').isInt({ min: 1, max: 100 }).withMessage('Seats must be between 1 and 100'),
+  body('totalSeats').custom((value, { req }) => {
+    const couples = req.body.isCouplesMode === 'true' || req.body.isCouplesMode === true;
+    if (couples) {
+      const seats = Number(value);
+      if (seats < 4 || seats % 2 !== 0) throw new Error('Couples mode needs an even number of seats (4 or more)');
+      if (req.body.vehicleType !== 'Car') throw new Error('Couples mode requires vehicle type "Car" (4-seater or bigger)');
+    }
+    return true;
+  }),
 ];
 
 export const reviewRules = [

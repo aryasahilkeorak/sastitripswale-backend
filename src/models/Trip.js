@@ -15,7 +15,8 @@ const expenseSchema = new Schema(
 const tripSchema = new Schema(
   {
     organizer: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    title: { type: String, trim: true, maxlength: 200 },
+    origin: { type: String, required: true, trim: true, maxlength: 200 },
+    viaStops: { type: [String], default: [] },
     destination: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, maxlength: 4000 },
     startDate: { type: Date, required: true },
@@ -35,7 +36,7 @@ const tripSchema = new Schema(
       index: true,
     },
     pickupLocation: { type: String, trim: true },
-    whatsappGroup: { type: String, trim: true },
+    isCouplesMode: { type: Boolean, default: false },
     coverImageUrl: { type: String, default: '' },
     status: {
       type: String,
@@ -53,7 +54,13 @@ const tripSchema = new Schema(
 );
 
 tripSchema.virtual('seatsLeft').get(function seatsLeft() {
-  return Math.max(0, (this.totalSeats || 0) - (this.filledSeats || 0));
+  // In couples mode the host couple occupies 2 seats without booking a TripInterest.
+  const reserved = this.isCouplesMode ? 2 : 0;
+  return Math.max(0, (this.totalSeats || 0) - reserved - (this.filledSeats || 0));
+});
+
+tripSchema.virtual('routeLabel').get(function routeLabel() {
+  return [this.origin, ...(this.viaStops || []), this.destination].filter(Boolean).join(' → ');
 });
 
 const Trip = mongoose.model('Trip', tripSchema);

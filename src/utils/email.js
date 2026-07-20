@@ -81,16 +81,44 @@ export function sendPaymentReceipt(user, payment) {
   });
 }
 
-export function sendTripInterestEmail(organizer, member, trip) {
+export function sendJoinRequestEmail(organizer, requester, trip) {
   return send({
     to: organizer.email,
-    subject: `Someone wants to join your ${trip.destination} trip!`,
+    subject: `${requester.fullName} wants to join your ${trip.destination} trip!`,
     html: wrap(
-      'New trip interest 🔥',
+      'New join request 🔥',
       `<p>Hi ${organizer.fullName},</p>
-       <p><b>${member.fullName}</b> (${member.city || 'India'}) showed interest in your trip to
+       <p><b>${requester.fullName}</b> (${requester.city || 'India'}) requested to join your trip to
        <b>${trip.destination}</b>.</p>
-       <p>Coordinate with them via your trip's WhatsApp group.</p>`
+       <p>Review the request on your trip page to accept or decline.</p>`
+    ),
+  });
+}
+
+export function sendJoinAcceptedEmail(requester, organizer, trip) {
+  return send({
+    to: requester.email,
+    subject: `You're in! ${trip.destination} trip request accepted`,
+    html: wrap(
+      "You're in! 🎉",
+      `<p>Hi ${requester.fullName},</p>
+       <p><b>${organizer.fullName}</b> accepted your request to join the trip to
+       <b>${trip.destination}</b>.</p>
+       <p>You've been added to the trip chat group — say hi!</p>`
+    ),
+  });
+}
+
+export function sendJoinRejectedEmail(requester, organizer, trip) {
+  return send({
+    to: requester.email,
+    subject: `Update on your ${trip.destination} trip request`,
+    html: wrap(
+      'Request declined',
+      `<p>Hi ${requester.fullName},</p>
+       <p><b>${organizer.fullName}</b> wasn't able to accept your request to join the trip to
+       <b>${trip.destination}</b> this time.</p>
+       <p>Browse other upcoming trips — your next adventure is waiting. 🎒</p>`
     ),
   });
 }
@@ -112,4 +140,11 @@ export function sendPasswordResetEmail(user, resetUrl) {
   });
 }
 
-export default { sendWelcomeEmail, sendPaymentReceipt, sendTripInterestEmail, sendPasswordResetEmail };
+export default {
+  sendWelcomeEmail,
+  sendPaymentReceipt,
+  sendJoinRequestEmail,
+  sendJoinAcceptedEmail,
+  sendJoinRejectedEmail,
+  sendPasswordResetEmail,
+};

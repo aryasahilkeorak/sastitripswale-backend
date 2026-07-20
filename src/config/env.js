@@ -69,6 +69,10 @@ export const env = {
     maxMb: int(process.env.MAX_UPLOAD_MB, 5),
   },
 
+  pexels: {
+    apiKey: process.env.PEXELS_API_KEY || '',
+  },
+
   seed: {
     adminEmail: process.env.SEED_ADMIN_EMAIL || 'admin@sastitripwale.com',
     adminPassword: process.env.SEED_ADMIN_PASSWORD || 'Admin@123',

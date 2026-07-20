@@ -175,7 +175,8 @@ async function seed() {
   const upcoming = [
     {
       organizer: rahul._id,
-      title: 'Spiti Valley Circuit',
+      origin: 'Delhi',
+      viaStops: ['Shimla', 'Kaza'],
       destination: 'Spiti Valley, HP',
       description: 'High-altitude cold desert loop. Kaza, Key Monastery, Chandratal.',
       startDate: soon(20),
@@ -191,7 +192,8 @@ async function seed() {
     },
     {
       organizer: priya._id,
-      title: 'Goa Beach Escape',
+      origin: 'Mumbai',
+      viaStops: [],
       destination: 'Goa',
       description: 'North + South Goa. Beaches, cafes, sunsets, and shacks.',
       startDate: soon(12),
@@ -207,7 +209,8 @@ async function seed() {
     },
     {
       organizer: arjun._id,
-      title: 'Leh–Ladakh Expedition',
+      origin: 'Manali',
+      viaStops: ['Jispa', 'Sarchu'],
       destination: 'Leh, Ladakh',
       description: 'Khardung La, Pangong Tso, Nubra Valley. The ultimate ride.',
       startDate: soon(30),
@@ -223,7 +226,8 @@ async function seed() {
     },
     {
       organizer: rahul._id,
-      title: 'Jaisalmer Desert Nights',
+      origin: 'Jaipur',
+      viaStops: [],
       destination: 'Jaisalmer, Rajasthan',
       description: 'Golden fort, Sam dunes, desert camping and folk music.',
       startDate: soon(18),
@@ -239,7 +243,8 @@ async function seed() {
     },
     {
       organizer: priya._id,
-      title: 'Gokarna Backpacking',
+      origin: 'Bangalore',
+      viaStops: [],
       destination: 'Gokarna, Karnataka',
       description: 'Beach hopping trek: Om, Kudle, Half-moon, Paradise.',
       startDate: soon(9),
@@ -255,7 +260,8 @@ async function seed() {
     },
     {
       organizer: arjun._id,
-      title: 'Coorg Coffee Trails',
+      origin: 'Bangalore',
+      viaStops: ['Mysore'],
       destination: 'Coorg, Karnataka',
       description: 'Misty hills, coffee estates, waterfalls and homestays.',
       startDate: soon(15),
@@ -275,7 +281,8 @@ async function seed() {
   const completed = [
     {
       organizer: arjun._id,
-      title: 'Meghalaya Monsoon',
+      origin: 'Guwahati',
+      viaStops: ['Shillong'],
       destination: 'Meghalaya',
       description: 'Living root bridges, Dawki river, Cherrapunji.',
       startDate: soon(-40),
@@ -298,9 +305,9 @@ async function seed() {
 
   const createdTrips = await Trip.insertMany([...upcoming, ...completed]);
 
-  // A couple of interests so seats + notifications look alive.
-  await TripInterest.create({ trip: createdTrips[0]._id, user: priya._id });
-  await TripInterest.create({ trip: createdTrips[1]._id, user: rahul._id });
+  // A couple of accepted interests so seats + notifications look alive.
+  await TripInterest.create({ trip: createdTrips[0]._id, user: priya._id, status: 'accepted' });
+  await TripInterest.create({ trip: createdTrips[1]._id, user: rahul._id, status: 'accepted' });
 
   // --- Membership payments (for history realism) ---
   await Payment.insertMany(

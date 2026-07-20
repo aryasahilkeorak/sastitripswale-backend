@@ -47,6 +47,7 @@ async function activateMembership(user, payment) {
   user.membershipPaidAt = new Date();
   user.membershipDuration = duration;
   user.membershipExpiresAt = new Date(from + durationMs(duration));
+  user.couponUsed = payment?.couponUsed || '';
   await user.save();
 
   if (payment?.couponUsed) {
@@ -54,7 +55,7 @@ async function activateMembership(user, payment) {
   }
   notify(user._id, {
     type: 'payment',
-    title: 'Membership active ✅',
+    title: 'Membership active',
     message: 'Your membership is active. Complete your profile to start planning and joining trips!',
   });
   sendPaymentReceipt(user, payment).catch(() => {});
@@ -114,7 +115,7 @@ export const createOrderHandler = asyncHandler(async (req, res) => {
     return res.json({
       success: true,
       isFree: true,
-      message: 'Membership activated for free! 🎉',
+      message: 'Membership activated for free!',
       user: req.user.toPrivateJSON(),
       payment,
     });
