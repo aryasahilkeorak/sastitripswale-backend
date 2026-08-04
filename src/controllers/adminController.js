@@ -18,6 +18,7 @@ import Gallery from '../models/Gallery.js';
 import Group from '../models/Group.js';
 import Message from '../models/Message.js';
 import Upload from '../models/Upload.js';
+import Setting from '../models/Setting.js';
 import Report from '../models/Report.js';
 import { notify } from '../utils/notify.js';
 import { sanitizePermissions, hasPermission } from '../utils/permissions.js';
@@ -576,4 +577,17 @@ export const deleteContactMessage = asyncHandler(async (req, res) => {
   const msg = await ContactMessage.findByIdAndDelete(req.params.id);
   if (!msg) throw ApiError.notFound('Message not found');
   res.json({ success: true });
+});
+
+// Site-wide settings (super-admin only)
+export const getSettings = asyncHandler(async (req, res) => {
+  const settings = await Setting.getSingleton();
+  res.json({ success: true, settings: { referralEnabled: settings.referralEnabled } });
+});
+
+export const toggleReferrals = asyncHandler(async (req, res) => {
+  const settings = await Setting.getSingleton();
+  settings.referralEnabled = !settings.referralEnabled;
+  await settings.save();
+  res.json({ success: true, referralEnabled: settings.referralEnabled });
 });

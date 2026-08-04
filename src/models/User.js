@@ -87,6 +87,12 @@ const userSchema = new Schema(
     // a Payment record still existing.
     couponUsed: { type: String, trim: true, uppercase: true, default: '' },
 
+    // Referral system — every user gets their own code; referredBy/referralCount
+    // track who invited whom. See utils/referral.js for code generation.
+    referralCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
+    referredBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    referralCount: { type: Number, default: 0, min: 0 },
+
     // Full profile (name, city, interests, vehicle, ID doc) collected AFTER
     // payment. Until complete, the user cannot plan or join trips.
     profileComplete: { type: Boolean, default: false },
@@ -167,6 +173,8 @@ userSchema.methods.toPrivateJSON = function toPrivateJSON() {
     membershipDuration: this.membershipDuration,
     membershipActive: this.hasActiveMembership(),
     couponUsed: this.couponUsed || '',
+    referralCode: this.referralCode || '',
+    referralCount: this.referralCount || 0,
     relationshipStatus: this.relationshipStatus || '',
     partnerMobile: this.partnerMobile || '',
     partnerDocUrl: this.partnerDocUrl || '',
