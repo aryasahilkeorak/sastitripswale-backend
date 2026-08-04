@@ -28,6 +28,7 @@ export const registerRules = [
     .isIn(['male', 'female', 'both'])
     .withMessage('Choose who you want to travel with'),
   body('age').optional({ values: 'falsy' }).isInt({ min: 18, max: 100 }).withMessage('Age must be 18+'),
+  body('referralCode').optional({ values: 'falsy' }).trim().isLength({ max: 20 }),
 ];
 
 export const loginRules = [

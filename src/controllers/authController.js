@@ -6,12 +6,14 @@ import crypto from 'crypto';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import User from '../models/User.js';
+import Setting from '../models/Setting.js';
 import { issueTokenPair, verifyRefreshToken, sha256 } from '../utils/jwt.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray } from '../utils/parse.js';
 import { notify } from '../utils/notify.js';
 import { sendWelcomeEmail, sendPasswordResetEmail } from '../utils/email.js';
 import { env } from '../config/env.js';
+import { assignReferralCode } from '../utils/referral.js';
 
 export const register = asyncHandler(async (req, res) => {
   const b = req.body;
@@ -43,6 +45,23 @@ export const register = asyncHandler(async (req, res) => {
   });
   await user.setPassword(b.password);
   if (req.file) user.avatarUrl = await saveUpload(req.file, { owner: user._id, kind: 'avatar' });
+  await assignReferralCode(user);
+
+  // Credit the referrer only while referrals are globally enabled — an
+  // incoming code is otherwise ignored (not an error) so old shared links
+  // don't break signup while the feature is paused.
+  const submittedCode = b.referralCode ? String(b.referralCode).toUpperCase().trim() : '';
+  if (submittedCode) {
+    const settings = await Setting.getSingleton();
+    if (settings.referralEnabled) {
+      const referrer = await User.findOne({ referralCode: submittedCode });
+      if (referrer) {
+        user.referredBy = referrer._id;
+        referrer.referralCount += 1;
+        await referrer.save();
+      }
+    }
+  }
 
   const pair = issueTokenPair(user);
   user.refreshTokenHash = pair.refreshTokenHash;

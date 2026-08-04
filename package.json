@@ -10,7 +10,8 @@
     "dev": "nodemon src/server.js",
     "seed": "node src/utils/seed.js",
     "seed:destroy": "node src/utils/seed.js --destroy",
-    "seed:demo": "node src/utils/seedDemoAdd.js"
+    "seed:demo": "node src/utils/seedDemoAdd.js",
+    "backfill:referrals": "node src/utils/backfillReferralCodes.js"
   },
   "engines": {
     "node": ">=18"

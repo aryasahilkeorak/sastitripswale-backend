@@ -8,6 +8,7 @@ import reviewRoutes from './reviewRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import contactRoutes from './contactRoutes.js';
 import chatRoutes from './chatRoutes.js';
+import referralRoutes from './referralRoutes.js';
 import { getPublicStats } from '../controllers/statsController.js';
 import { razorpayEnabled } from '../utils/razorpay.js';
 import { env } from '../config/env.js';
@@ -34,5 +35,6 @@ router.use('/reviews', reviewRoutes);
 router.use('/admin', adminRoutes);
 router.use('/contact', contactRoutes);
 router.use('/chat', chatRoutes);
+router.use('/referrals', referralRoutes);
 
 export default router;

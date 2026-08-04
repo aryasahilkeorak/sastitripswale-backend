@@ -57,4 +57,8 @@ router.get('/reports', perm('messages'), admin.getReports);
 router.patch('/reports/:id', perm('messages'), admin.updateReport);
 router.delete('/reports/:id', perm('messages'), admin.deleteReport);
 
+// Site-wide settings (super-admin only)
+router.get('/settings', superOnly, admin.getSettings);
+router.patch('/settings/referrals', superOnly, admin.toggleReferrals);
+
 export default router;
