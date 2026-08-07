@@ -16,7 +16,7 @@ import { notify } from '../utils/notify.js';
 import { saveUpload } from '../utils/uploadStore.js';
 
 const isId = (v) => mongoose.isValidObjectId(v);
-const MEMBER_FIELDS = 'fullName avatarUrl city isVerified';
+const MEMBER_FIELDS = 'fullName avatarUrl city isVerified role';
 
 // Ensure the trip's group exists and its membership is in sync with
 // (organizer + everyone who has shown interest). Handles legacy trips.
@@ -113,14 +113,19 @@ export const getOrCreateDm = asyncHandler(async (req, res) => {
   });
   if (blocked) throw ApiError.forbidden('You cannot message this member');
 
-  const connected = await Connection.exists({
-    status: 'accepted',
-    $or: [
-      { sender: req.user._id, receiver: otherId },
-      { sender: otherId, receiver: req.user._id },
-    ],
-  });
-  if (!connected) throw ApiError.forbidden('You must be connected to message this member');
+  // Admins act as official support and can message any member directly —
+  // regular members still need to be connected first.
+  const isSupportSender = req.user.role === 'admin' || req.user.role === 'superadmin';
+  if (!isSupportSender) {
+    const connected = await Connection.exists({
+      status: 'accepted',
+      $or: [
+        { sender: req.user._id, receiver: otherId },
+        { sender: otherId, receiver: req.user._id },
+      ],
+    });
+    if (!connected) throw ApiError.forbidden('You must be connected to message this member');
+  }
 
   let group = await Group.findOne({ type: 'dm', members: { $all: [req.user._id, otherId] } });
   if (group && group.members.length !== 2) group = null; // defensive — DMs are always exactly 2 members
@@ -324,12 +329,12 @@ export const getMessages = asyncHandler(async (req, res) => {
     messages = await Message.find({ group: group._id, createdAt: { $gt: after } })
       .sort({ createdAt: 1 })
       .limit(100)
-      .populate('sender', 'fullName avatarUrl');
+      .populate('sender', 'fullName avatarUrl role');
   } else {
     const recent = await Message.find({ group: group._id })
       .sort({ createdAt: -1 })
       .limit(50)
-      .populate('sender', 'fullName avatarUrl');
+      .populate('sender', 'fullName avatarUrl role');
     messages = recent.reverse();
   }
 
@@ -351,6 +356,6 @@ export const sendMessage = asyncHandler(async (req, res) => {
   group.lastMessageText = text.slice(0, 120);
   await group.save();
 
-  await message.populate('sender', 'fullName avatarUrl');
+  await message.populate('sender', 'fullName avatarUrl role');
   res.status(201).json({ success: true, message });
 });

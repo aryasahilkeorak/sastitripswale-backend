@@ -130,7 +130,7 @@ export const getTrip = asyncHandler(async (req, res) => {
     TripInterest.find({ trip: trip._id, status: 'accepted' })
       .populate('user', memberSelect)
       .limit(12),
-    Gallery.find({ trip: trip._id }).sort({ createdAt: -1 }),
+    Gallery.find({ trip: trip._id }).populate('user', 'fullName avatarUrl').sort({ createdAt: -1 }),
   ]);
 
   let requestStatus = null;
@@ -368,6 +368,15 @@ export const uploadTripPhoto = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.id);
   if (!trip) throw ApiError.notFound('Trip not found');
   if (!req.file) throw ApiError.badRequest('Photo file required');
+
+  // Only people who actually went on the trip — the organizer or an
+  // accepted co-traveler — can add photos to it. Admins moderate (delete)
+  // from the gallery instead of uploading on someone else's behalf.
+  const isOrganizer = String(trip.organizer) === String(req.user._id);
+  if (!isOrganizer) {
+    const isMember = await TripInterest.exists({ trip: trip._id, user: req.user._id, status: 'accepted' });
+    if (!isMember) throw ApiError.forbidden('Only trip members can add photos to this trip');
+  }
 
   const photoUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'trip' });
   const photo = await Gallery.create({

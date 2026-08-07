@@ -8,6 +8,19 @@ import bcrypt from 'bcryptjs';
 
 const { Schema } = mongoose;
 
+// A member can register more than one vehicle (e.g. a bike and a car).
+// Each one needs its own RC (front+back, uploaded as Document records
+// tagged with this subdocument's _id) before it counts toward the
+// "Verified Vehicle Owner" tier.
+const vehicleSchema = new Schema(
+  {
+    vehicleType: { type: String, enum: ['Bike', 'Car', 'Bus', 'Other'], required: true },
+    vehicleModel: { type: String, trim: true, maxlength: 100 },
+    regNumber: { type: String, trim: true, uppercase: true, maxlength: 20, required: true },
+  },
+  { timestamps: true }
+);
+
 const userSchema = new Schema(
   {
     fullName: { type: String, required: true, trim: true, maxlength: 100 },
@@ -54,8 +67,12 @@ const userSchema = new Schema(
     emergencyContact: { type: String, trim: true, select: false },
 
     hasVehicle: { type: Boolean, default: false },
+    // Kept for backwards compatibility (first/primary vehicle, used by the
+    // "Bike/Car Owners" directory filters) — `vehicles` below is the
+    // full, multi-vehicle list.
     vehicleType: { type: String, enum: ['Bike', 'Car', 'Bus', 'Other', ''], default: '' },
     vehicleModel: { type: String, trim: true, maxlength: 100 },
+    vehicles: { type: [vehicleSchema], default: [] },
     travelInterests: { type: [String], default: [] },
     drinks: { type: String, default: 'No' },
     smokes: { type: String, default: 'No' },
@@ -77,7 +94,11 @@ const userSchema = new Schema(
     partnerMobile: { type: String, trim: true, maxlength: 15 },
     partnerDocUrl: { type: String, default: '' },
 
-    isVerified: { type: Boolean, default: false }, // admin sets after doc review
+    isVerified: { type: Boolean, default: false }, // true whenever verificationLevel !== 'none'
+    // Computed automatically from reviewed documents — see utils/verification.js.
+    // 'verified' = Aadhaar + PAN + live selfie all verified.
+    // 'vehicle_verified' = the above, plus Driving Licence + at least one vehicle's RC.
+    verificationLevel: { type: String, enum: ['none', 'verified', 'vehicle_verified'], default: 'none' },
     membershipPaid: { type: Boolean, default: false },
     membershipPaidAt: { type: Date },
     membershipExpiresAt: { type: Date },
@@ -153,6 +174,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     travelInterests: this.travelInterests,
     coTravelerPreference: this.coTravelerPreference,
     isVerified: this.isVerified,
+    verificationLevel: this.verificationLevel || 'none',
     createdAt: this.createdAt,
   };
 };
@@ -178,6 +200,7 @@ userSchema.methods.toPrivateJSON = function toPrivateJSON() {
     relationshipStatus: this.relationshipStatus || '',
     partnerMobile: this.partnerMobile || '',
     partnerDocUrl: this.partnerDocUrl || '',
+    vehicles: this.vehicles || [],
     profileComplete: this.profileComplete,
     isActive: this.isActive,
     updatedAt: this.updatedAt,

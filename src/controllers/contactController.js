@@ -3,7 +3,7 @@ import ContactMessage from '../models/ContactMessage.js';
 
 export const submitContact = asyncHandler(async (req, res) => {
   const { name, mobile, email, subject, message } = req.body;
-  await ContactMessage.create({ name, mobile, email, subject, message });
+  await ContactMessage.create({ name, mobile, email, subject, message, user: req.user?._id || null });
   res.status(201).json({
     success: true,
     message: "Thanks! We'll get back to you within 24 hours.",

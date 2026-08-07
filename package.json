@@ -11,7 +11,9 @@
     "seed": "node src/utils/seed.js",
     "seed:destroy": "node src/utils/seed.js --destroy",
     "seed:demo": "node src/utils/seedDemoAdd.js",
-    "backfill:referrals": "node src/utils/backfillReferralCodes.js"
+    "backfill:referrals": "node src/utils/backfillReferralCodes.js",
+    "backfill:cotraveler": "node src/utils/fixCoTravelerPreference.js",
+    "backfill:verification": "node src/utils/backfillVerificationLevel.js"
   },
   "engines": {
     "node": ">=18"
@@ -32,7 +34,9 @@
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
     "nodemailer": "^6.9.14",
-    "razorpay": "^2.9.4"
+    "razorpay": "^2.9.4",
+    "sharp": "^0.35.3",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

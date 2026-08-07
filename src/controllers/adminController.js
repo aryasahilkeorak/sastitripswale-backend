@@ -21,7 +21,12 @@ import Upload from '../models/Upload.js';
 import Setting from '../models/Setting.js';
 import Report from '../models/Report.js';
 import { notify } from '../utils/notify.js';
+import { recomputeVerification } from '../utils/verification.js';
+import { vehiclesWithStatus } from './memberController.js';
 import { sanitizePermissions, hasPermission } from '../utils/permissions.js';
+
+const DOC_TYPE_LABEL = { aadhaar: 'Aadhaar', pan: 'PAN', voter_id: 'Voter ID', driving_license: 'Driving Licence', rc: 'RC', selfie: 'live selfie photo' };
+const TIER_LABEL = { verified: 'Verified', vehicle_verified: 'Verified Vehicle Owner' };
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
@@ -204,15 +209,41 @@ export const reviewDocument = asyncHandler(async (req, res) => {
   doc.verifiedAt = new Date();
   await doc.save();
 
-  if (action === 'reject') {
-    notify(doc.user, {
-      type: 'verification',
-      title: 'Document rejected',
-      message: `Your ${doc.docType.replace('_', ' ')}${doc.side ? ` (${doc.side})` : ''} was rejected. Please re-upload it from your dashboard.`,
-    });
+  const docLabel = `${DOC_TYPE_LABEL[doc.docType] || doc.docType}${doc.side ? ` (${doc.side})` : ''}`;
+  notify(doc.user, {
+    type: 'verification',
+    title: action === 'verify' ? 'Document verified' : 'Document rejected',
+    message:
+      action === 'verify'
+        ? `Your ${docLabel} has been verified.`
+        : `Your ${docLabel} was rejected. Please re-upload it from your dashboard.`,
+    meta: { documentId: String(doc._id), status: doc.status },
+  });
+
+  // A single doc review can flip the member's overall verification tier —
+  // recompute it and let them know if their badge just changed.
+  const result = await recomputeVerification(doc.user);
+  if (result?.changed) {
+    const { level, previous } = result;
+    if (level === 'none') {
+      notify(doc.user, {
+        type: 'verification',
+        title: 'Verified badge removed',
+        message: 'One of your required documents needs attention — your verified badge has been removed until it is resolved.',
+      });
+    } else if (TIER_LABEL[level] && level !== previous) {
+      notify(doc.user, {
+        type: 'verification',
+        title: `You're a ${TIER_LABEL[level]}!`,
+        message:
+          level === 'vehicle_verified'
+            ? 'All your ID and vehicle documents are verified — you now have the Verified Vehicle Owner badge.'
+            : 'Your ID documents are verified — you now have the Verified badge.',
+      });
+    }
   }
 
-  res.json({ success: true, document: doc });
+  res.json({ success: true, document: doc, verificationLevel: result?.level });
 });
 
 // Full detail for the "click a user" view — photo, docs, number, everything.
@@ -220,7 +251,7 @@ export const getUserDetail = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id).select('+emergencyContact');
   if (!user) throw ApiError.notFound('User not found');
 
-  const [documents, tripsOrganized, tripsJoined, payments, connections] = await Promise.all([
+  const [documents, tripsOrganized, tripsJoined, payments, connections, vehicles] = await Promise.all([
     Document.find({ user: user._id }).sort({ createdAt: -1 }),
     Trip.countDocuments({ organizer: user._id }),
     TripInterest.countDocuments({ user: user._id }),
@@ -229,6 +260,7 @@ export const getUserDetail = asyncHandler(async (req, res) => {
       $or: [{ sender: user._id }, { receiver: user._id }],
       status: 'accepted',
     }),
+    vehiclesWithStatus(user),
   ]);
 
   res.json({
@@ -237,9 +269,11 @@ export const getUserDetail = asyncHandler(async (req, res) => {
       ...user.toPrivateJSON(),
       role: user.role,
       isVerified: user.isVerified,
+      verificationLevel: user.verificationLevel || 'none',
       emergencyContact: user.emergencyContact || '',
     },
     documents,
+    vehicles,
     stats: { tripsOrganized, tripsJoined, connections },
     payments,
   });
@@ -368,26 +402,35 @@ export const deleteUser = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'User and all their data have been deleted' });
 });
 
+// PATCH /admin/users/:id/verify — manual admin override of a member's
+// verification tier (independent of the two normal-traveler/vehicle-owner
+// document buttons in the review UI). Note: the next time any of this
+// member's documents gets reviewed, recomputeVerification() will re-derive
+// the tier from their actual documents and can override a manual grant that
+// isn't backed by verified docs.
 export const verifyUser = asyncHandler(async (req, res) => {
-  const verified = req.body.verified !== false; // default true
+  const level = req.body.level;
+  if (!['none', 'verified', 'vehicle_verified'].includes(level)) {
+    throw ApiError.badRequest("level must be 'none', 'verified' or 'vehicle_verified'");
+  }
   const user = await User.findById(req.params.id);
   if (!user) throw ApiError.notFound('User not found');
 
-  user.isVerified = verified;
+  user.verificationLevel = level;
+  user.isVerified = level !== 'none';
   await user.save();
-  await Document.updateMany(
-    { user: user._id },
-    { $set: { isVerified: verified, status: verified ? 'verified' : 'pending', verifiedBy: req.user._id, verifiedAt: new Date() } }
-  );
 
-  if (verified) {
+  if (level !== 'none') {
     notify(user._id, {
       type: 'verification',
-      title: 'Profile verified',
-      message: 'Your profile has been verified. You now have a verified badge!',
+      title: `You're a ${TIER_LABEL[level]}!`,
+      message:
+        level === 'vehicle_verified'
+          ? 'An admin has verified your profile and vehicle documents — you now have the Verified Vehicle Owner badge.'
+          : 'An admin has verified your profile — you now have the Verified badge.',
     });
   }
-  res.json({ success: true, isVerified: user.isVerified });
+  res.json({ success: true, isVerified: user.isVerified, verificationLevel: user.verificationLevel });
 });
 
 export const toggleUserStatus = asyncHandler(async (req, res) => {
@@ -533,6 +576,24 @@ export const deleteGalleryPhoto = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Photo deleted' });
 });
 
+// POST /admin/gallery/bulk-delete — delete multiple selected photos at once.
+export const bulkDeleteGalleryPhotos = asyncHandler(async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter(Boolean) : [];
+  if (!ids.length) throw ApiError.badRequest('No photos selected');
+
+  const photos = await Gallery.find({ _id: { $in: ids } }).select('photoUrl');
+  const uploadIds = photos
+    .map((p) => /\/api\/files\/([a-f0-9]{24})/i.exec(p.photoUrl || '')?.[1])
+    .filter(Boolean);
+
+  await Promise.all([
+    Upload.deleteMany({ _id: { $in: uploadIds } }),
+    Gallery.deleteMany({ _id: { $in: ids } }),
+  ]);
+
+  res.json({ success: true, deleted: photos.length });
+});
+
 export const getReports = asyncHandler(async (req, res) => {
   const reports = await Report.find({})
     .populate('reporter', 'fullName email avatarUrl')
@@ -559,7 +620,27 @@ export const deleteReport = asyncHandler(async (req, res) => {
 });
 
 export const getContactMessages = asyncHandler(async (req, res) => {
-  const messages = await ContactMessage.find({}).sort({ handled: 1, createdAt: -1 }).limit(200);
+  const messages = await ContactMessage.find({})
+    .populate('user', 'fullName isActive')
+    .sort({ handled: 1, createdAt: -1 })
+    .limit(200);
+
+  // Older/anonymous submissions never had `user` set — best-effort match
+  // them to an existing account by email/mobile so "Reply in chat" still
+  // works instead of only being available for messages sent while logged in.
+  await Promise.all(
+    messages
+      .filter((m) => !m.user)
+      .map(async (m) => {
+        const found = await User.findOne({
+          $or: [...(m.email ? [{ email: m.email }] : []), ...(m.mobile ? [{ mobile: m.mobile }] : [])],
+        }).select('fullName isActive');
+        if (!found) return;
+        m.user = found;
+        await ContactMessage.updateOne({ _id: m._id }, { $set: { user: found._id } });
+      })
+  );
+
   res.json({ success: true, messages });
 });
 
