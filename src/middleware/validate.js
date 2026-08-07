@@ -26,7 +26,14 @@ export const registerRules = [
   body('coTravelerPreference')
     .optional({ values: 'falsy' })
     .isIn(['male', 'female', 'both'])
-    .withMessage('Choose who you want to travel with'),
+    .withMessage('Choose who you want to travel with')
+    // A male can't set a female-only preference, and vice versa.
+    .custom((value, { req }) => {
+      const gender = req.body.gender;
+      if (gender === 'Male' && value === 'female') throw new Error('A male member cannot select a female-only preference');
+      if (gender === 'Female' && value === 'male') throw new Error('A female member cannot select a male-only preference');
+      return true;
+    }),
   body('age').optional({ values: 'falsy' }).isInt({ min: 18, max: 100 }).withMessage('Age must be 18+'),
   body('referralCode').optional({ values: 'falsy' }).trim().isLength({ max: 20 }),
 ];

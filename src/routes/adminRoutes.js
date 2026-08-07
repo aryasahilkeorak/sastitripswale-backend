@@ -45,6 +45,7 @@ router.delete('/coupons/:id', perm('coupons'), admin.deleteCoupon);
 
 // Gallery
 router.get('/gallery', perm('gallery'), admin.getAdminGallery);
+router.post('/gallery/bulk-delete', perm('gallery'), admin.bulkDeleteGalleryPhotos);
 router.delete('/gallery/:id', perm('gallery'), admin.deleteGalleryPhoto);
 
 // Contact / help / complaints

@@ -10,6 +10,9 @@ const contactMessageSchema = new Schema(
     subject: { type: String, trim: true, maxlength: 150 },
     message: { type: String, required: true, trim: true, maxlength: 2000 },
     handled: { type: Boolean, default: false },
+    // Set only if the sender was logged in at submission time — lets an
+    // admin reply in-app (chat) instead of just by email.
+    user: { type: Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true }
 );

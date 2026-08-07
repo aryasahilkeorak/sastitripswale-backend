@@ -73,6 +73,15 @@ export const env = {
     apiKey: process.env.PEXELS_API_KEY || '',
   },
 
+  // Web Push (browser notifications). Dev-only fallback keys are provided so
+  // this works out of the box locally — set real ones (`npx web-push
+  // generate-vapid-keys`) in production.
+  push: {
+    publicKey: process.env.VAPID_PUBLIC_KEY || 'BK_gLY6DSG4QJf5VbAxgGcVNZ5x_7omalIT6RWXibI2mKPhY5HCpFXvUjJnyap65Wv1ce6gjVZ9J3SE_p6q11PM',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '_qSO7WrwEBbtE0k__f5VbkW129ANdDZWuEZz5a8h1MI',
+    contactEmail: process.env.VAPID_CONTACT_EMAIL || 'admin@sastitripwale.com',
+  },
+
   seed: {
     adminEmail: process.env.SEED_ADMIN_EMAIL || 'admin@sastitripwale.com',
     adminPassword: process.env.SEED_ADMIN_PASSWORD || 'Admin@123',
