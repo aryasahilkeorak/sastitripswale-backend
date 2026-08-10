@@ -1,5 +1,5 @@
 // ============================================================
-//  Backfill script — computes verificationLevel for every existing
+//  Backfill script - computes verificationLevel for every existing
 //  member from their already-reviewed documents (needed once, since
 //  the tiered verification system is new and isVerified used to be
 //  set manually by an admin).
@@ -27,7 +27,7 @@ async function run() {
     else if (!isVerifiedNow && wasVerified) downgraded += 1;
   }
 
-  console.log(`Done. ${upgraded} member(s) tiered up, ${downgraded} lost their badge (missing required documents — most likely the new mandatory live selfie).`);
+  console.log(`Done. ${upgraded} member(s) tiered up, ${downgraded} lost their badge (missing required documents - most likely the new mandatory live selfie).`);
   await disconnectDB();
   process.exit(0);
 }

@@ -1,5 +1,5 @@
 // ============================================================
-//  JWT helpers — dual token system (short access + long refresh).
+//  JWT helpers - dual token system (short access + long refresh).
 //  Refresh tokens are additionally stored as a SHA-256 hash on the
 //  user document so they can be revoked (logout / password reset).
 // ============================================================

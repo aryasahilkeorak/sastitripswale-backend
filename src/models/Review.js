@@ -14,5 +14,12 @@ const reviewSchema = new Schema(
   { timestamps: true }
 );
 
+// One review per user per trip - generic testimonials (no trip attached)
+// aren't constrained by this.
+reviewSchema.index(
+  { trip: 1, user: 1 },
+  { unique: true, partialFilterExpression: { trip: { $exists: true } } }
+);
+
 const Review = mongoose.model('Review', reviewSchema);
 export default Review;

@@ -35,6 +35,19 @@ const tripSchema = new Schema(
       default: 'mixed',
       index: true,
     },
+    budgetIncludes: {
+      type: String,
+      enum: ['fuel_toll', 'fuel_toll_stay', 'fuel_toll_stay_food', 'all_inclusive', ''],
+      default: 'fuel_toll',
+    },
+    // Who this trip is visible/joinable to. 'Any' (default) means everyone;
+    // 'Male'/'Female' restrict it to travelers with that gender on file.
+    genderPreference: {
+      type: String,
+      enum: ['Any', 'Male', 'Female'],
+      default: 'Any',
+      index: true,
+    },
     pickupLocation: { type: String, trim: true },
     isCouplesMode: { type: Boolean, default: false },
     coverImageUrl: { type: String, default: '' },

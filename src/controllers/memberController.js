@@ -1,5 +1,5 @@
 // ============================================================
-//  Member controller — directory, profiles, connections,
+//  Member controller - directory, profiles, connections,
 //  notifications, document upload.
 // ============================================================
 import mongoose from 'mongoose';
@@ -46,7 +46,7 @@ export const getMembers = asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 12));
 
-  // Superadmins are shown too (tagged "Founder" on the frontend) — plain
+  // Superadmins are shown too (tagged "Founder" on the frontend) - plain
   // admins stay out of the public directory.
   const filter = { isActive: true, role: { $in: ['member', 'superadmin'] } };
   if (req.query.vehicleType) filter.vehicleType = req.query.vehicleType;
@@ -67,7 +67,7 @@ export const getMembers = asyncHandler(async (req, res) => {
   }
 
   // Directory order: the Founder (superadmin) always leads, then the most
-  // "active" travelers — accepted connections first, trips organized next —
+  // "active" travelers - accepted connections first, trips organized next -
   // then verified, then newest.
   const [agg] = await User.aggregate([
     { $match: filter },
@@ -140,7 +140,7 @@ export const getMember = asyncHandler(async (req, res) => {
       .select('origin viaStops destination coverImageUrl startDate endDate budgetPerHead status'),
     Gallery.find({ user: user._id }).sort({ createdAt: -1 }).limit(12).select('photoUrl caption category'),
     Gallery.countDocuments({ user: user._id }),
-    // Other travelers who share at least one travel interest — used to
+    // Other travelers who share at least one travel interest - used to
     // power the "Suggested travelers" rail on the member's profile page.
     user.travelInterests?.length
       ? User.find({
@@ -186,9 +186,9 @@ export const getMember = asyncHandler(async (req, res) => {
   });
 });
 
-// GET /members/:id/selfie — the member's live verification photo. Visible
+// GET /members/:id/selfie - the member's live verification photo. Visible
 // only to the member themself, admins, or a member they're connected with
-// (accepted connection) — never to the public or a stranger.
+// (accepted connection) - never to the public or a stranger.
 export const getMemberSelfie = asyncHandler(async (req, res) => {
   const targetId = req.params.id;
   const isSelf = String(req.user._id) === String(targetId);
@@ -213,7 +213,7 @@ export const getMemberSelfie = asyncHandler(async (req, res) => {
   res.json({ success: true, url: doc.fileUrl, status: doc.status });
 });
 
-// POST /members/:id/block — toggle blocking another member.
+// POST /members/:id/block - toggle blocking another member.
 export const toggleBlock = asyncHandler(async (req, res) => {
   const targetId = req.params.id;
   if (String(targetId) === String(req.user._id)) throw ApiError.badRequest("You can't block yourself");
@@ -229,7 +229,7 @@ export const toggleBlock = asyncHandler(async (req, res) => {
   res.json({ success: true, blocked: true });
 });
 
-// POST /members/:id/report — flag a member's profile/behavior for admin review.
+// POST /members/:id/report - flag a member's profile/behavior for admin review.
 export const reportUser = asyncHandler(async (req, res) => {
   const targetId = req.params.id;
   if (String(targetId) === String(req.user._id)) throw ApiError.badRequest("You can't report yourself");
@@ -346,7 +346,7 @@ export const updateProfile = asyncHandler(async (req, res) => {
 
 // Mandatory profile completion after payment. Accepts multipart with
 // avatar + aadhaarFront/aadhaarBack (required) + pan (optional) + profile
-// fields — plus dlFront/dlBack/rcFront/rcBack (required if hasVehicle).
+// fields - plus dlFront/dlBack/rcFront/rcBack (required if hasVehicle).
 export const completeProfile = asyncHandler(async (req, res) => {
   const user = req.user;
   const b = req.body;
@@ -430,13 +430,13 @@ export const uploadDocument = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, document: { id: doc._id, docType: doc.docType } });
 });
 
-// GET /members/documents — my own uploaded ID documents, with review status.
+// GET /members/documents - my own uploaded ID documents, with review status.
 export const getMyDocuments = asyncHandler(async (req, res) => {
   const documents = await Document.find({ user: req.user._id }).sort({ createdAt: -1 });
   res.json({ success: true, documents });
 });
 
-// PUT /members/documents/:id — replace the file for a document the admin
+// PUT /members/documents/:id - replace the file for a document the admin
 // rejected. Resets it to 'pending' so it goes back into the review queue.
 export const reuploadDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
@@ -474,7 +474,11 @@ export async function vehiclesWithStatus(user) {
     return {
       id: v._id,
       vehicleType: v.vehicleType,
+      brand: v.brand || '',
       vehicleModel: v.vehicleModel || '',
+      year: v.year || null,
+      mileageKmpl: v.mileageKmpl || null,
+      fuelType: v.fuelType || '',
       regNumber: v.regNumber,
       addedAt: v.createdAt,
       status,
@@ -482,19 +486,32 @@ export async function vehiclesWithStatus(user) {
   });
 }
 
-// GET /members/vehicles — the signed-in member's registered vehicles, each
+// GET /members/vehicles - the signed-in member's registered vehicles, each
 // with its own RC verification status.
 export const getMyVehicles = asyncHandler(async (req, res) => {
   const vehicles = await vehiclesWithStatus(req.user);
   res.json({ success: true, vehicles });
 });
 
-// POST /members/vehicles — register another vehicle. The RC (front+back) is
-// mandatory every time — without it a new vehicle can never be verified.
+// POST /members/vehicles - register another vehicle. The RC (front+back) is
+// mandatory every time - without it a new vehicle can never be verified.
+const FUEL_TYPES = ['Petrol', 'Diesel', 'CNG', 'Electric'];
+const CURRENT_YEAR = new Date().getFullYear();
+
 export const addVehicle = asyncHandler(async (req, res) => {
-  const { vehicleType, vehicleModel, regNumber } = req.body;
+  const { vehicleType, brand, vehicleModel, year, mileageKmpl, fuelType, regNumber } = req.body;
   if (!VEHICLE_TYPES.includes(vehicleType)) throw ApiError.badRequest('Select a valid vehicle type');
   if (!regNumber || !String(regNumber).trim()) throw ApiError.badRequest('Vehicle registration number is required');
+
+  const yearNum = year ? Number(year) : undefined;
+  if (yearNum !== undefined && (Number.isNaN(yearNum) || yearNum < 1980 || yearNum > CURRENT_YEAR)) {
+    throw ApiError.badRequest(`Enter a valid model year (1980–${CURRENT_YEAR})`);
+  }
+  const mileageNum = mileageKmpl ? Number(mileageKmpl) : undefined;
+  if (mileageNum !== undefined && (Number.isNaN(mileageNum) || mileageNum <= 0 || mileageNum > 200)) {
+    throw ApiError.badRequest('Enter a valid mileage (km/l)');
+  }
+  if (fuelType && !FUEL_TYPES.includes(fuelType)) throw ApiError.badRequest('Select a valid fuel type');
 
   const files = req.files || {};
   if (!files.rcFront?.[0] || !files.rcBack?.[0]) {
@@ -502,7 +519,15 @@ export const addVehicle = asyncHandler(async (req, res) => {
   }
 
   const user = req.user;
-  user.vehicles.push({ vehicleType, vehicleModel: (vehicleModel || '').trim(), regNumber: String(regNumber).trim() });
+  user.vehicles.push({
+    vehicleType,
+    brand: (brand || '').trim(),
+    vehicleModel: (vehicleModel || '').trim(),
+    year: yearNum,
+    mileageKmpl: mileageNum,
+    fuelType: fuelType || '',
+    regNumber: String(regNumber).trim(),
+  });
   const vehicle = user.vehicles[user.vehicles.length - 1];
   // Keep the legacy single-vehicle fields pointed at *a* vehicle so the
   // existing "Bike/Car Owners" directory filters keep working for members
@@ -523,7 +548,17 @@ export const addVehicle = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     success: true,
-    vehicle: { id: vehicle._id, vehicleType: vehicle.vehicleType, vehicleModel: vehicle.vehicleModel, regNumber: vehicle.regNumber, status: 'pending' },
+    vehicle: {
+      id: vehicle._id,
+      vehicleType: vehicle.vehicleType,
+      brand: vehicle.brand,
+      vehicleModel: vehicle.vehicleModel,
+      year: vehicle.year,
+      mileageKmpl: vehicle.mileageKmpl,
+      fuelType: vehicle.fuelType,
+      regNumber: vehicle.regNumber,
+      status: 'pending',
+    },
   });
 });
 
@@ -588,8 +623,8 @@ export const respondConnection = asyncHandler(async (req, res) => {
   res.json({ success: true, status: conn.status });
 });
 
-// DELETE /members/connect/:id — either side of an accepted (or pending)
-// connection can remove it — "Disconnect" / withdraw a request.
+// DELETE /members/connect/:id - either side of an accepted (or pending)
+// connection can remove it - "Disconnect" / withdraw a request.
 export const removeConnection = asyncHandler(async (req, res) => {
   const conn = await Connection.findById(req.params.id);
   if (!conn) throw ApiError.notFound('Connection not found');
@@ -623,7 +658,7 @@ export const markNotificationsRead = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
-// PATCH /members/notifications/:id/read — mark a single notification read,
+// PATCH /members/notifications/:id/read - mark a single notification read,
 // used when the member clicks into it to view the related content.
 export const markNotificationRead = asyncHandler(async (req, res) => {
   const n = await Notification.findOne({ _id: req.params.id, user: req.user._id });
@@ -635,26 +670,26 @@ export const markNotificationRead = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
-// DELETE /members/notifications/:id — clear a single notification.
+// DELETE /members/notifications/:id - clear a single notification.
 export const deleteNotification = asyncHandler(async (req, res) => {
   const result = await Notification.deleteOne({ _id: req.params.id, user: req.user._id });
   if (!result.deletedCount) throw ApiError.notFound('Notification not found');
   res.json({ success: true });
 });
 
-// DELETE /members/notifications — clear every notification for this member.
+// DELETE /members/notifications - clear every notification for this member.
 export const clearNotifications = asyncHandler(async (req, res) => {
   await Notification.deleteMany({ user: req.user._id });
   res.json({ success: true });
 });
 
-// GET /members/push/vapid-key — public, needed by the browser before it can
+// GET /members/push/vapid-key - public, needed by the browser before it can
 // create a push subscription.
 export const getPushPublicKey = asyncHandler(async (req, res) => {
   res.json({ success: true, publicKey: env.push.publicKey });
 });
 
-// POST /members/push/subscribe — save (or refresh) this browser's push
+// POST /members/push/subscribe - save (or refresh) this browser's push
 // subscription so future notify() calls can reach it.
 export const subscribePush = asyncHandler(async (req, res) => {
   const { endpoint, keys } = req.body;
@@ -668,7 +703,7 @@ export const subscribePush = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true });
 });
 
-// POST /members/push/unsubscribe — stop notifying this browser (e.g. user
+// POST /members/push/unsubscribe - stop notifying this browser (e.g. user
 // disabled notifications, or logged out).
 export const unsubscribePush = asyncHandler(async (req, res) => {
   const { endpoint } = req.body;

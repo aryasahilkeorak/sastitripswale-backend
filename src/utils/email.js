@@ -1,5 +1,5 @@
 // ============================================================
-//  Email — Nodemailer with a safe fallback.
+//  Email - Nodemailer with a safe fallback.
 //  If SMTP creds are not configured, emails are logged to the
 //  console instead of failing, so the app runs out of the box.
 // ============================================================
@@ -16,7 +16,7 @@ if (env.email.enabled) {
   });
 }
 
-// Base HTML wrapper — dark navy + fire gradient, matches the site theme.
+// Base HTML wrapper - dark navy + fire gradient, matches the site theme.
 function wrap(title, bodyHtml) {
   return `
   <div style="background:#06070d;padding:32px 0;font-family:'Segoe UI',Arial,sans-serif;">
@@ -38,7 +38,7 @@ function wrap(title, bodyHtml) {
 
 async function send({ to, subject, html }) {
   if (!transporter) {
-    // Dev fallback — do not fail the request just because email is off.
+    // Dev fallback - do not fail the request just because email is off.
     // eslint-disable-next-line no-console
     console.log(`\n📧 [email disabled] To: ${to} | Subject: ${subject}`);
     return { queued: false, logged: true };
@@ -104,7 +104,7 @@ export function sendJoinAcceptedEmail(requester, organizer, trip) {
       `<p>Hi ${requester.fullName},</p>
        <p><b>${organizer.fullName}</b> accepted your request to join the trip to
        <b>${trip.destination}</b>.</p>
-       <p>You've been added to the trip chat group — say hi!</p>`
+       <p>You've been added to the trip chat group - say hi!</p>`
     ),
   });
 }
@@ -118,7 +118,7 @@ export function sendJoinRejectedEmail(requester, organizer, trip) {
       `<p>Hi ${requester.fullName},</p>
        <p><b>${organizer.fullName}</b> wasn't able to accept your request to join the trip to
        <b>${trip.destination}</b> this time.</p>
-       <p>Browse other upcoming trips — your next adventure is waiting. 🎒</p>`
+       <p>Browse other upcoming trips - your next adventure is waiting. 🎒</p>`
     ),
   });
 }

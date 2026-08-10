@@ -1,5 +1,5 @@
 // ============================================================
-//  Additive demo-data script — adds 5 demo members + 5 demo trips
+//  Additive demo-data script - adds 5 demo members + 5 demo trips
 //  WITHOUT touching any existing data (no wipe). Safe to re-run;
 //  skips any user/trip that already exists.
 //  Usage: npm run seed:demo
@@ -15,7 +15,7 @@ const cover = (seed) => `https://picsum.photos/seed/${seed}/900/560`;
 const day = 24 * 60 * 60 * 1000;
 const soon = (d) => new Date(Date.now() + d * day);
 
-// 1x1 transparent PNG — stand-in "ID document" so the couples-mode demo
+// 1x1 transparent PNG - stand-in "ID document" so the couples-mode demo
 // account has a real partnerDocUrl to show off the feature end to end.
 const PLACEHOLDER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -80,7 +80,7 @@ async function run() {
       city: 'Delhi',
       state: 'Delhi',
       profession: 'Photographer',
-      bio: 'Demo account for testing — bike trips and mountain passes.',
+      bio: 'Demo account for testing - bike trips and mountain passes.',
       hasVehicle: true,
       vehicleType: 'Bike',
       vehicleModel: 'KTM Duke 390',
@@ -101,7 +101,7 @@ async function run() {
       city: 'Mumbai',
       state: 'Maharashtra',
       profession: 'Marketing Manager',
-      bio: 'Demo account for testing — beach hopping and food trails.',
+      bio: 'Demo account for testing - beach hopping and food trails.',
       hasVehicle: true,
       vehicleType: 'Car',
       vehicleModel: 'Maruti Swift',
@@ -123,7 +123,7 @@ async function run() {
       city: 'Bangalore',
       state: 'Karnataka',
       profession: 'Consultant',
-      bio: 'Demo account for testing — camping and treks.',
+      bio: 'Demo account for testing - camping and treks.',
       hasVehicle: true,
       vehicleType: 'Car',
       vehicleModel: 'Mahindra Scorpio',
@@ -144,7 +144,7 @@ async function run() {
       city: 'Chandigarh',
       state: 'Punjab',
       profession: 'Architect',
-      bio: 'Demo account for testing — married, hosts Couples Mode trips.',
+      bio: 'Demo account for testing - married, hosts Couples Mode trips.',
       hasVehicle: true,
       vehicleType: 'Car',
       vehicleModel: 'Hyundai Creta',
@@ -171,7 +171,7 @@ async function run() {
       city: 'Pune',
       state: 'Maharashtra',
       profession: 'Student',
-      bio: 'Demo account for testing — solo backpacking on a budget.',
+      bio: 'Demo account for testing - solo backpacking on a budget.',
       hasVehicle: false,
       travelInterests: ['Backpacking', 'Trekking'],
       relationshipStatus: 'in_a_relationship',
@@ -186,7 +186,7 @@ async function run() {
     origin: 'Delhi',
     viaStops: ['Manali'],
     destination: 'Kasol, HP',
-    description: 'Demo trip — riverside camps and Parvati valley.',
+    description: 'Demo trip - riverside camps and Parvati valley.',
     startDate: soon(14),
     endDate: soon(18),
     budgetPerHead: 7000,
@@ -204,7 +204,7 @@ async function run() {
     origin: 'Mumbai',
     viaStops: [],
     destination: 'Alibaug, Maharashtra',
-    description: 'Demo trip — weekend beach getaway.',
+    description: 'Demo trip - weekend beach getaway.',
     startDate: soon(9),
     endDate: soon(11),
     budgetPerHead: 3500,
@@ -222,7 +222,7 @@ async function run() {
     origin: 'Bangalore',
     viaStops: ['Sakleshpur'],
     destination: 'Kudremukh, Karnataka',
-    description: 'Demo trip — trek and camping under the stars.',
+    description: 'Demo trip - trek and camping under the stars.',
     startDate: soon(21),
     endDate: soon(23),
     budgetPerHead: 4200,
@@ -240,7 +240,7 @@ async function run() {
     origin: 'Chandigarh',
     viaStops: [],
     destination: 'Shimla, HP',
-    description: 'Demo trip — Couples Mode. Fuel & toll split with the host couple.',
+    description: 'Demo trip - Couples Mode. Fuel & toll split with the host couple.',
     startDate: soon(16),
     endDate: soon(19),
     budgetPerHead: 2000,
@@ -259,7 +259,7 @@ async function run() {
     origin: 'Pune',
     viaStops: [],
     destination: 'Gokarna, Karnataka',
-    description: 'Demo trip — budget backpacking, beach hopping.',
+    description: 'Demo trip - budget backpacking, beach hopping.',
     startDate: soon(25),
     endDate: soon(29),
     budgetPerHead: 4800,
@@ -274,11 +274,11 @@ async function run() {
 
   console.log('\n✅ Demo data ready (existing data untouched).');
   console.log('   Password for all demo accounts: Demo@123');
-  console.log('   demo.rider@example.com       — bike trips, single');
-  console.log('   demo.explorer@example.com    — car/beach trips, username: demo_explorer');
-  console.log('   demo.camper@example.com      — camping/treks');
-  console.log('   demo.couplehost@example.com  — married, Couples Mode host, username: couplehost');
-  console.log('   demo.backpacker@example.com  — backpacking, username: demo_backpacker\n');
+  console.log('   demo.rider@example.com       - bike trips, single');
+  console.log('   demo.explorer@example.com    - car/beach trips, username: demo_explorer');
+  console.log('   demo.camper@example.com      - camping/treks');
+  console.log('   demo.couplehost@example.com  - married, Couples Mode host, username: couplehost');
+  console.log('   demo.backpacker@example.com  - backpacking, username: demo_backpacker\n');
 
   await disconnectDB();
   await mongoose.connection.close();

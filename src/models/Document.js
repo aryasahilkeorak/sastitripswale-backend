@@ -19,7 +19,7 @@ const documentSchema = new Schema(
     status: { type: String, enum: ['pending', 'verified', 'rejected'], default: 'pending' },
     verifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     verifiedAt: { type: Date },
-    // Set only for an 'rc' document — which of the user's (possibly several)
+    // Set only for an 'rc' document - which of the user's (possibly several)
     // vehicles it belongs to. Ties a specific RC to a specific vehicle so
     // each vehicle can be verified independently.
     vehicle: { type: Schema.Types.ObjectId, default: null },

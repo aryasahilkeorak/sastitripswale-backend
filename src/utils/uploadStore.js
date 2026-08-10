@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import Upload from '../models/Upload.js';
 
 // sharp's ESM wrapper uses `import pkg from "./package.json" with {...}`,
-// an import-attributes syntax that needs Node 20.10+/22+ — require() it via
+// an import-attributes syntax that needs Node 20.10+/22+ - require() it via
 // its CJS entry instead so this works on older Node 20.x too.
 const require = createRequire(import.meta.url);
 const sharp = require('sharp');
@@ -11,10 +11,10 @@ const sharp = require('sharp');
 const COMPRESSIBLE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_DIMENSION = 1600;
 
-// Downscale + re-encode photos before they ever hit the database — these
+// Downscale + re-encode photos before they ever hit the database - these
 // are user-uploaded phone photos that can easily be 4-8MB each, and every
 // one is stored as raw bytes in a MongoDB document. Documents (Aadhaar/PAN/
-// etc.) and non-image files (PDFs) pass through untouched — a compression
+// etc.) and non-image files (PDFs) pass through untouched - a compression
 // artifact on an ID document could make it unreadable during review.
 async function compressImage(buffer, mimetype) {
   try {
@@ -25,7 +25,7 @@ async function compressImage(buffer, mimetype) {
     const outBuffer = await pipeline.toBuffer();
     return { buffer: outBuffer, contentType: mimetype === 'image/png' ? 'image/png' : 'image/jpeg' };
   } catch {
-    // Corrupt/unsupported image data — store the original rather than fail the upload.
+    // Corrupt/unsupported image data - store the original rather than fail the upload.
     return { buffer, contentType: mimetype };
   }
 }
@@ -33,7 +33,7 @@ async function compressImage(buffer, mimetype) {
 export async function saveUpload(file, { owner, kind = 'other', compress } = {}) {
   if (!file || !file.buffer) return '';
   // Default: compress everything EXCEPT ID/verification documents (Aadhaar,
-  // PAN, DL, RC, the live selfie) — those need to stay full-resolution for
+  // PAN, DL, RC, the live selfie) - those need to stay full-resolution for
   // an admin to actually read/verify them. Callers can still force either way.
   const shouldCompress = compress ?? kind !== 'document';
   let { buffer, mimetype } = file;

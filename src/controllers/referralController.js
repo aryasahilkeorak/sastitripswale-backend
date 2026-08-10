@@ -1,5 +1,5 @@
 // ============================================================
-//  Referral controller — a member's own code/stats, and the
+//  Referral controller - a member's own code/stats, and the
 //  public on/off status the signup form checks before showing
 //  the referral-code field.
 // ============================================================

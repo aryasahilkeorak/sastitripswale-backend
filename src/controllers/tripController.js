@@ -6,6 +6,7 @@ import ApiError from '../utils/ApiError.js';
 import Trip from '../models/Trip.js';
 import TripInterest from '../models/TripInterest.js';
 import Gallery from '../models/Gallery.js';
+import Review from '../models/Review.js';
 import User from '../models/User.js';
 import Group from '../models/Group.js';
 import Message from '../models/Message.js';
@@ -13,9 +14,15 @@ import { saveUpload } from '../utils/uploadStore.js';
 import { notify } from '../utils/notify.js';
 import { sendJoinRequestEmail, sendJoinAcceptedEmail, sendJoinRejectedEmail } from '../utils/email.js';
 import { fetchDestinationPhoto } from '../utils/pexels.js';
+import { estimateTripCost } from '../utils/tripCost.js';
 import { pick } from '../utils/parse.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+// The "Leaving from"/"Going to" fields are filled by PlaceAutocomplete's
+// "City, State" suggestion labels, but trips just store the plain city a
+// host typed (e.g. "Mohali") - matching against the full label would never
+// find it. Match on the part before the first comma instead.
+const primaryPlace = (s) => String(s).split(',')[0].trim();
 
 const SORTmap = {
   budget_asc: { budgetPerHead: 1 },
@@ -59,9 +66,19 @@ export const getTrips = asyncHandler(async (req, res) => {
   if (maxBudget) filter.budgetPerHead = { ...filter.budgetPerHead, $lte: Number(maxBudget) };
   if (search) filter.$or = [{ destination: rx(search) }, { origin: rx(search) }];
 
+  // Gender-restricted trips only show up for travelers with a matching
+  // gender on file - everyone else (including logged-out visitors) only
+  // sees 'Any' trips. Trips saved before this field existed have no
+  // genderPreference at all, so treat "missing" the same as 'Any'.
+  const visibleGenders = ['Any'];
+  if (req.user?.gender === 'Male' || req.user?.gender === 'Female') visibleGenders.push(req.user.gender);
+  filter.$and = [
+    { $or: [{ genderPreference: { $exists: false } }, { genderPreference: { $in: visibleGenders } }] },
+  ];
+
   // BlaBlaCar-style ride search: leaving from / going to / travel date / seats needed.
-  if (from) filter.origin = rx(from);
-  if (to) filter.destination = rx(to);
+  if (from) filter.origin = rx(primaryPlace(from));
+  if (to) filter.destination = rx(primaryPlace(to));
   if (date) {
     const d = new Date(date);
     if (!Number.isNaN(d.getTime())) {
@@ -85,7 +102,7 @@ export const getTrips = asyncHandler(async (req, res) => {
 
   const [trips, total] = await Promise.all([
     Trip.find(filter)
-      .populate('organizer', 'fullName city avatarUrl isVerified')
+      .populate('organizer', 'fullName username city avatarUrl isVerified vehicleModel')
       .sort(sortObj)
       .skip((page - 1) * limit)
       .limit(limit),
@@ -103,34 +120,42 @@ export const getTrips = asyncHandler(async (req, res) => {
 
 export const getMyTrips = asyncHandler(async (req, res) => {
   const trips = await Trip.find({ organizer: req.user._id })
-    .populate('organizer', 'fullName city avatarUrl isVerified')
+    .populate('organizer', 'fullName username city avatarUrl isVerified vehicleModel')
     .sort({ createdAt: -1 });
   const data = await attachCounts(trips, req.user._id);
   res.json({ success: true, trips: data });
 });
 
-const MEMBER_FIELDS = 'fullName city avatarUrl isVerified';
+const MEMBER_FIELDS = 'fullName username city avatarUrl isVerified vehicleModel';
 const MEMBER_FIELDS_WITH_PARTNER = `${MEMBER_FIELDS} partnerMobile partnerDocUrl`;
 
 export const getTrip = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.id).populate(
     'organizer',
-    'fullName city avatarUrl isVerified profession vehicleType partnerMobile partnerDocUrl'
+    'fullName username city avatarUrl isVerified profession vehicleType vehicleModel partnerMobile partnerDocUrl'
   );
   if (!trip) throw ApiError.notFound('Trip not found');
 
   const isOrganizer = req.user && String(trip.organizer._id) === String(req.user._id);
   const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'superadmin');
+
+  if (trip.genderPreference && trip.genderPreference !== 'Any' && !isOrganizer && !isAdmin) {
+    if (req.user?.gender !== trip.genderPreference) {
+      throw ApiError.forbidden(`This trip is only open to ${trip.genderPreference.toLowerCase()} travelers`);
+    }
+  }
+
   // Partner mobile/ID doc are safety info collected about someone who isn't
-  // a registered user — only ever surfaced to admins, never to the organizer
+  // a registered user - only ever surfaced to admins, never to the organizer
   // or the public (the organizer only needs to know *who* they're travelling with).
   const memberSelect = isAdmin ? MEMBER_FIELDS_WITH_PARTNER : MEMBER_FIELDS;
 
-  const [accepted, photos] = await Promise.all([
+  const [accepted, photos, reviews] = await Promise.all([
     TripInterest.find({ trip: trip._id, status: 'accepted' })
       .populate('user', memberSelect)
       .limit(12),
     Gallery.find({ trip: trip._id }).populate('user', 'fullName avatarUrl').sort({ createdAt: -1 }),
+    Review.find({ trip: trip._id }).populate('user', 'fullName avatarUrl').sort({ createdAt: -1 }),
   ]);
 
   let requestStatus = null;
@@ -138,6 +163,11 @@ export const getTrip = asyncHandler(async (req, res) => {
     const mine = await TripInterest.findOne({ trip: trip._id, user: req.user._id }).select('status');
     requestStatus = mine?.status || null;
   }
+
+  // Only travelers who were actually on the trip - organizer or an
+  // accepted co-traveler - can leave a review, and only once it's over.
+  const canReview = trip.status === 'completed' && (isOrganizer || requestStatus === 'accepted');
+  const myReview = req.user ? reviews.find((r) => String(r.user?._id) === String(req.user._id)) || null : null;
 
   const withCoupleFlag = (i) => ({ ...i.user.toObject(), isCouple: i.isCouple });
 
@@ -164,8 +194,34 @@ export const getTrip = asyncHandler(async (req, res) => {
       members: accepted.filter((i) => i.user).map(withCoupleFlag),
       pendingRequests,
       photos,
+      reviews,
+      canReview,
+      myReview,
     },
   });
+});
+
+// Fuel + toll estimate for the route a host is about to post - a planning
+// aid, not something stored on the trip. Distance comes from OSRM (free,
+// keyless routing over OpenStreetMap data); fuel/toll are approximated from
+// the vehicle's mileage and India-wide average rates (see utils/tripCost.js).
+export const estimateCost = asyncHandler(async (req, res) => {
+  const { origin, viaStops, destination, mileageKmpl, fuelType } = req.body;
+  if (!origin || !destination) throw ApiError.badRequest('Origin and destination are required');
+  const mileage = Number(mileageKmpl);
+  if (!mileage || mileage <= 0) throw ApiError.badRequest("Enter your vehicle's mileage (km/l)");
+
+  const estimate = await estimateTripCost({
+    origin,
+    viaStops: Array.isArray(viaStops) ? viaStops : [],
+    destination,
+    mileageKmpl: mileage,
+    fuelType,
+  });
+  if (!estimate) {
+    throw ApiError.badRequest("Couldn't find a driving route between those places - check the spelling and try again");
+  }
+  res.json({ success: true, estimate });
 });
 
 const CREATE_FIELDS = [
@@ -179,6 +235,8 @@ const CREATE_FIELDS = [
   'totalSeats',
   'vehicleType',
   'tripType',
+  'budgetIncludes',
+  'genderPreference',
   'pickupLocation',
   'isCouplesMode',
 ];
@@ -207,7 +265,7 @@ export const createTrip = asyncHandler(async (req, res) => {
     members: [req.user._id],
   });
 
-  await trip.populate('organizer', 'fullName city avatarUrl isVerified');
+  await trip.populate('organizer', 'fullName username city avatarUrl isVerified vehicleModel');
   res.status(201).json({ success: true, trip: { ...trip.toJSON(), interestCount: 0, requestStatus: null } });
 });
 
@@ -252,6 +310,9 @@ export const requestToJoin = asyncHandler(async (req, res) => {
   if (!trip) throw ApiError.notFound('Trip not found');
   if (String(trip.organizer) === String(req.user._id)) {
     throw ApiError.badRequest("You can't join a trip you organize");
+  }
+  if (trip.genderPreference && trip.genderPreference !== 'Any' && req.user.gender !== trip.genderPreference) {
+    throw ApiError.forbidden(`This trip is only open to ${trip.genderPreference.toLowerCase()} travelers`);
   }
 
   const existing = await TripInterest.findOne({ trip: trip._id, user: req.user._id });
@@ -369,8 +430,8 @@ export const uploadTripPhoto = asyncHandler(async (req, res) => {
   if (!trip) throw ApiError.notFound('Trip not found');
   if (!req.file) throw ApiError.badRequest('Photo file required');
 
-  // Only people who actually went on the trip — the organizer or an
-  // accepted co-traveler — can add photos to it. Admins moderate (delete)
+  // Only people who actually went on the trip - the organizer or an
+  // accepted co-traveler - can add photos to it. Admins moderate (delete)
   // from the gallery instead of uploading on someone else's behalf.
   const isOrganizer = String(trip.organizer) === String(req.user._id);
   if (!isOrganizer) {
@@ -387,6 +448,37 @@ export const uploadTripPhoto = asyncHandler(async (req, res) => {
     category: req.body.category || trip.tripType || 'group',
   });
   res.status(201).json({ success: true, photo });
+});
+
+export const createTripReview = asyncHandler(async (req, res) => {
+  const trip = await Trip.findById(req.params.id);
+  if (!trip) throw ApiError.notFound('Trip not found');
+  if (trip.status !== 'completed') {
+    throw ApiError.badRequest('You can only review a trip after it has been completed');
+  }
+
+  // Same "actually went on the trip" check as uploadTripPhoto.
+  const isOrganizer = String(trip.organizer) === String(req.user._id);
+  if (!isOrganizer) {
+    const isMember = await TripInterest.exists({ trip: trip._id, user: req.user._id, status: 'accepted' });
+    if (!isMember) throw ApiError.forbidden('Only trip members can review this trip');
+  }
+
+  // Upsert so re-submitting edits a member's existing review instead of
+  // hitting the {trip,user} unique index as a duplicate-key error.
+  const review = await Review.findOneAndUpdate(
+    { trip: trip._id, user: req.user._id },
+    {
+      trip: trip._id,
+      user: req.user._id,
+      rating: Number(req.body.rating),
+      message: req.body.message,
+      tripDestination: trip.destination,
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  ).populate('user', 'fullName city avatarUrl isVerified');
+
+  res.status(201).json({ success: true, review });
 });
 
 export const addExpense = asyncHandler(async (req, res) => {

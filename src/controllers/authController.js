@@ -1,5 +1,5 @@
 // ============================================================
-//  Auth controller — register, login, refresh, logout, me,
+//  Auth controller - register, login, refresh, logout, me,
 //  forgot/reset password. Dual JWT with rotating refresh tokens.
 // ============================================================
 import crypto from 'crypto';
@@ -47,7 +47,7 @@ export const register = asyncHandler(async (req, res) => {
   if (req.file) user.avatarUrl = await saveUpload(req.file, { owner: user._id, kind: 'avatar' });
   await assignReferralCode(user);
 
-  // Credit the referrer only while referrals are globally enabled — an
+  // Credit the referrer only while referrals are globally enabled - an
   // incoming code is otherwise ignored (not an error) so old shared links
   // don't break signup while the feature is paused.
   const submittedCode = b.referralCode ? String(b.referralCode).toUpperCase().trim() : '';
@@ -178,7 +178,7 @@ export const forgotPassword = asyncHandler(async (req, res) => {
     sendPasswordResetEmail(user, resetUrl).catch(() => {});
   }
 
-  // Always 200 — anti-enumeration.
+  // Always 200 - anti-enumeration.
   res.json({
     success: true,
     message: 'If an account exists for that email, a reset link has been sent.',

@@ -1,6 +1,6 @@
 // ============================================================
 //  Granular permissions a super admin can grant to a plain 'admin'.
-//  Super admins always have every permission implicitly — this list
+//  Super admins always have every permission implicitly - this list
 //  only restricts/expands what a non-super admin can do.
 // ============================================================
 export const ADMIN_PERMISSIONS = [

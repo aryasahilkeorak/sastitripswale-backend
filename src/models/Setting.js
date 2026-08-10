@@ -1,5 +1,5 @@
 // ============================================================
-//  Setting — a single global config document (key: 'global').
+//  Setting - a single global config document (key: 'global').
 //  Add new site-wide flags here as needed.
 // ============================================================
 import mongoose from 'mongoose';
