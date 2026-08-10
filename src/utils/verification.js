@@ -1,7 +1,7 @@
 // ============================================================
 //  Two-tier verification, computed from reviewed documents.
-//  'verified'         — Aadhaar (front+back) + PAN + live selfie, all verified.
-//  'vehicle_verified' — the above, plus Driving Licence (front+back) and
+//  'verified'         - Aadhaar (front+back) + PAN + live selfie, all verified.
+//  'vehicle_verified' - the above, plus Driving Licence (front+back) and
 //                        at least one vehicle's RC (front+back).
 // ============================================================
 import Document from '../models/Document.js';
@@ -40,8 +40,8 @@ export async function recomputeVerification(userId) {
 
   const previous = user.verificationLevel || 'none';
   const desiredIsVerified = level !== 'none';
-  // Write whenever either field is out of sync — not just on a tier
-  // transition — so a stale/manually-set isVerified (e.g. from before this
+  // Write whenever either field is out of sync - not just on a tier
+  // transition - so a stale/manually-set isVerified (e.g. from before this
   // tiered system existed) always gets corrected to match reality.
   if (previous !== level || user.isVerified !== desiredIsVerified) {
     user.verificationLevel = level;

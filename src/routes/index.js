@@ -9,6 +9,7 @@ import adminRoutes from './adminRoutes.js';
 import contactRoutes from './contactRoutes.js';
 import chatRoutes from './chatRoutes.js';
 import referralRoutes from './referralRoutes.js';
+import placesRoutes from './placesRoutes.js';
 import { getPublicStats } from '../controllers/statsController.js';
 import { razorpayEnabled } from '../utils/razorpay.js';
 import { env } from '../config/env.js';
@@ -36,5 +37,6 @@ router.use('/admin', adminRoutes);
 router.use('/contact', contactRoutes);
 router.use('/chat', chatRoutes);
 router.use('/referrals', referralRoutes);
+router.use('/places', placesRoutes);
 
 export default router;

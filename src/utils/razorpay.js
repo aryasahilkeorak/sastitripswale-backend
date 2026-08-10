@@ -28,7 +28,7 @@ export async function createOrder({ amountPaise, receipt }) {
       payment_capture: 1,
     });
   }
-  // TEST mode mock order — mirrors the shape the frontend needs.
+  // TEST mode mock order - mirrors the shape the frontend needs.
   return {
     id: `order_test_${receipt}`,
     amount: amountPaise,

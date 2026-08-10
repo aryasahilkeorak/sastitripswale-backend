@@ -1,5 +1,5 @@
 // ============================================================
-//  Backfill script — assigns a referral code to every existing
+//  Backfill script - assigns a referral code to every existing
 //  user who doesn't already have one (accounts created before
 //  the referral system existed).
 //  Usage: npm run backfill:referrals

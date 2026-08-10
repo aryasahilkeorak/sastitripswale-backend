@@ -2,7 +2,7 @@
   "name": "sastitripwale-backend",
   "version": "2.0.0",
   "private": true,
-  "description": "SastiTripWale — MERN backend (Express + MongoDB). Verified travel community: trips, membership, payments, admin.",
+  "description": "SastiTripWale - MERN backend (Express + MongoDB). Verified travel community: trips, membership, payments, admin.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

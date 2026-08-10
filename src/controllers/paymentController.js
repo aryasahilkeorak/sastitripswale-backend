@@ -1,5 +1,5 @@
 // ============================================================
-//  Payment controller — coupons + Razorpay membership flow.
+//  Payment controller - coupons + Razorpay membership flow.
 //  Works with real Razorpay keys, and also in a TEST mode
 //  (no keys) so the whole UI flow is usable out of the box.
 // ============================================================
@@ -229,7 +229,7 @@ export const webhook = asyncHandler(async (req, res) => {
     }
   }
 
-  // Always 200 quickly — Razorpay retries on non-200.
+  // Always 200 quickly - Razorpay retries on non-200.
   res.status(200).json({ received: true });
 });
 

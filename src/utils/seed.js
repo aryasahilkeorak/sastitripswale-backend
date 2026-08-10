@@ -1,5 +1,5 @@
 // ============================================================
-//  Seed script — demo data.
+//  Seed script - demo data.
 //  Usage:
 //    npm run seed            (wipes + reseeds core collections)
 //    npm run seed:destroy    (only wipes)

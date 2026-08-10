@@ -1,5 +1,5 @@
 // ============================================================
-//  Admin controller — dashboard stats + management actions.
+//  Admin controller - dashboard stats + management actions.
 //  All routes are protected by protect + requireRole('admin').
 // ============================================================
 import asyncHandler from '../utils/asyncHandler.js';
@@ -122,7 +122,7 @@ export const getStats = asyncHandler(async (req, res) => {
   }
 
   // Revenue figures are only sent to admins with the 'revenue' permission
-  // (super admins always have it) — everyone else gets `payments: null`.
+  // (super admins always have it) - everyone else gets `payments: null`.
   const canSeeRevenue = hasPermission(req.user, 'revenue');
 
   res.json({
@@ -194,7 +194,7 @@ export const getUserDocuments = asyncHandler(async (req, res) => {
   res.json({ success: true, documents: docs });
 });
 
-// PATCH /admin/documents/:id — accept or reject a single uploaded document.
+// PATCH /admin/documents/:id - accept or reject a single uploaded document.
 // Rejected documents can be re-uploaded by the member from their dashboard.
 export const reviewDocument = asyncHandler(async (req, res) => {
   const action = req.body.action;
@@ -220,7 +220,7 @@ export const reviewDocument = asyncHandler(async (req, res) => {
     meta: { documentId: String(doc._id), status: doc.status },
   });
 
-  // A single doc review can flip the member's overall verification tier —
+  // A single doc review can flip the member's overall verification tier -
   // recompute it and let them know if their badge just changed.
   const result = await recomputeVerification(doc.user);
   if (result?.changed) {
@@ -229,7 +229,7 @@ export const reviewDocument = asyncHandler(async (req, res) => {
       notify(doc.user, {
         type: 'verification',
         title: 'Verified badge removed',
-        message: 'One of your required documents needs attention — your verified badge has been removed until it is resolved.',
+        message: 'One of your required documents needs attention - your verified badge has been removed until it is resolved.',
       });
     } else if (TIER_LABEL[level] && level !== previous) {
       notify(doc.user, {
@@ -237,8 +237,8 @@ export const reviewDocument = asyncHandler(async (req, res) => {
         title: `You're a ${TIER_LABEL[level]}!`,
         message:
           level === 'vehicle_verified'
-            ? 'All your ID and vehicle documents are verified — you now have the Verified Vehicle Owner badge.'
-            : 'Your ID documents are verified — you now have the Verified badge.',
+            ? 'All your ID and vehicle documents are verified - you now have the Verified Vehicle Owner badge.'
+            : 'Your ID documents are verified - you now have the Verified badge.',
       });
     }
   }
@@ -246,7 +246,7 @@ export const reviewDocument = asyncHandler(async (req, res) => {
   res.json({ success: true, document: doc, verificationLevel: result?.level });
 });
 
-// Full detail for the "click a user" view — photo, docs, number, everything.
+// Full detail for the "click a user" view - photo, docs, number, everything.
 export const getUserDetail = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id).select('+emergencyContact');
   if (!user) throw ApiError.notFound('User not found');
@@ -319,7 +319,7 @@ export const updateAdminPermissions = asyncHandler(async (req, res) => {
   const target = await User.findById(req.params.id);
   if (!target) throw ApiError.notFound('User not found');
   if (target.role !== 'admin') {
-    throw ApiError.badRequest('Only admin accounts have configurable permissions — super admins have full access');
+    throw ApiError.badRequest('Only admin accounts have configurable permissions - super admins have full access');
   }
   target.permissions = sanitizePermissions(req.body.permissions);
   await target.save();
@@ -364,7 +364,7 @@ export const deleteUser = asyncHandler(async (req, res) => {
     throw ApiError.forbidden('Only a super admin can delete an admin account');
   }
 
-  // Cascade — trips organized (and their groups/messages/interests/photos)
+  // Cascade - trips organized (and their groups/messages/interests/photos)
   const trips = await Trip.find({ organizer: user._id }).select('_id');
   const tripIds = trips.map((t) => t._id);
   if (tripIds.length) {
@@ -402,7 +402,7 @@ export const deleteUser = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'User and all their data have been deleted' });
 });
 
-// PATCH /admin/users/:id/verify — manual admin override of a member's
+// PATCH /admin/users/:id/verify - manual admin override of a member's
 // verification tier (independent of the two normal-traveler/vehicle-owner
 // document buttons in the review UI). Note: the next time any of this
 // member's documents gets reviewed, recomputeVerification() will re-derive
@@ -426,8 +426,8 @@ export const verifyUser = asyncHandler(async (req, res) => {
       title: `You're a ${TIER_LABEL[level]}!`,
       message:
         level === 'vehicle_verified'
-          ? 'An admin has verified your profile and vehicle documents — you now have the Verified Vehicle Owner badge.'
-          : 'An admin has verified your profile — you now have the Verified badge.',
+          ? 'An admin has verified your profile and vehicle documents - you now have the Verified Vehicle Owner badge.'
+          : 'An admin has verified your profile - you now have the Verified badge.',
     });
   }
   res.json({ success: true, isVerified: user.isVerified, verificationLevel: user.verificationLevel });
@@ -568,7 +568,7 @@ export const deleteGalleryPhoto = asyncHandler(async (req, res) => {
   const photo = await Gallery.findById(req.params.id);
   if (!photo) throw ApiError.notFound('Photo not found');
 
-  // The photo's bytes live in a separate Upload document — clean it up too.
+  // The photo's bytes live in a separate Upload document - clean it up too.
   const match = /\/api\/files\/([a-f0-9]{24})/i.exec(photo.photoUrl || '');
   if (match) await Upload.deleteOne({ _id: match[1] });
 
@@ -576,7 +576,7 @@ export const deleteGalleryPhoto = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Photo deleted' });
 });
 
-// POST /admin/gallery/bulk-delete — delete multiple selected photos at once.
+// POST /admin/gallery/bulk-delete - delete multiple selected photos at once.
 export const bulkDeleteGalleryPhotos = asyncHandler(async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.filter(Boolean) : [];
   if (!ids.length) throw ApiError.badRequest('No photos selected');
@@ -625,7 +625,7 @@ export const getContactMessages = asyncHandler(async (req, res) => {
     .sort({ handled: 1, createdAt: -1 })
     .limit(200);
 
-  // Older/anonymous submissions never had `user` set — best-effort match
+  // Older/anonymous submissions never had `user` set - best-effort match
   // them to an existing account by email/mobile so "Reply in chat" still
   // works instead of only being available for messages sent while logged in.
   await Promise.all(

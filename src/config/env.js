@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 
 // backend/.env  (this file lives in backend/src/config)
 // In DEVELOPMENT: override so your local .env wins over stale global shell vars.
-// In PRODUCTION (Render/host): do NOT override — the platform's dashboard env
+// In PRODUCTION (Render/host): do NOT override - the platform's dashboard env
 // vars must win, even if a .env file was accidentally committed to the repo.
 dotenv.config({
   path: path.resolve(__dirname, '../../.env'),
@@ -74,7 +74,7 @@ export const env = {
   },
 
   // Web Push (browser notifications). Dev-only fallback keys are provided so
-  // this works out of the box locally — set real ones (`npx web-push
+  // this works out of the box locally - set real ones (`npx web-push
   // generate-vapid-keys`) in production.
   push: {
     publicKey: process.env.VAPID_PUBLIC_KEY || 'BK_gLY6DSG4QJf5VbAxgGcVNZ5x_7omalIT6RWXibI2mKPhY5HCpFXvUjJnyap65Wv1ce6gjVZ9J3SE_p6q11PM',

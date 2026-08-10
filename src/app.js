@@ -1,5 +1,5 @@
 // ============================================================
-//  Express application — security middleware + routes.
+//  Express application - security middleware + routes.
 // ============================================================
 import express from 'express';
 import cors from 'cors';
@@ -38,7 +38,7 @@ app.use(
       // No origin header = curl / server-to-server / mobile app → allow.
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin.replace(/\/+$/, ''))) return cb(null, true);
-      // Deny cleanly — return false instead of throwing, so a blocked origin
+      // Deny cleanly - return false instead of throwing, so a blocked origin
       // gets a normal CORS rejection, NOT a 500 on the preflight.
       return cb(null, false);
     },
@@ -65,7 +65,7 @@ app.use(hpp());
 app.use(compression());
 app.use(morgan(env.isProd ? 'combined' : 'dev'));
 
-// --- Uploaded files (stored in MongoDB) — outside the rate limiter so image
+// --- Uploaded files (stored in MongoDB) - outside the rate limiter so image
 //     heavy pages don't get throttled. ---
 app.get('/api/files/:id', getFile);
 

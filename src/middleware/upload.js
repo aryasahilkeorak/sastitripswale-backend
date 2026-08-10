@@ -1,5 +1,5 @@
 // ============================================================
-//  File uploads — Multer MEMORY storage. The buffer is then
+//  File uploads - Multer MEMORY storage. The buffer is then
 //  persisted into MongoDB via utils/uploadStore.saveUpload().
 // ============================================================
 import multer from 'multer';

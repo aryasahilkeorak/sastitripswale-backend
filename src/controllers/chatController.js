@@ -1,5 +1,5 @@
 // ============================================================
-//  Chat controller — trip chats + custom groups + messages.
+//  Chat controller - trip chats + custom groups + messages.
 //  Messaging uses simple polling from the client (GET ?after=...).
 // ============================================================
 import mongoose from 'mongoose';
@@ -59,7 +59,7 @@ async function ensureAccess(group, userId) {
   throw ApiError.forbidden('You are not a member of this chat');
 }
 
-// GET /chat/groups — groups I'm in.
+// GET /chat/groups - groups I'm in.
 export const getMyGroups = asyncHandler(async (req, res) => {
   const groups = await Group.find({ members: req.user._id })
     .populate('trip', 'origin viaStops destination coverImageUrl status')
@@ -86,7 +86,7 @@ export const getMyGroups = asyncHandler(async (req, res) => {
   });
 });
 
-// GET /chat/trip/:tripId — get (or create) the chat for a trip.
+// GET /chat/trip/:tripId - get (or create) the chat for a trip.
 export const getTripGroup = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.tripId);
   if (!trip) throw ApiError.notFound('Trip not found');
@@ -96,7 +96,7 @@ export const getTripGroup = asyncHandler(async (req, res) => {
   res.json({ success: true, groupId: group._id });
 });
 
-// GET /chat/dm/:userId — get (or create) the 1-on-1 chat with a connected member.
+// GET /chat/dm/:userId - get (or create) the 1-on-1 chat with a connected member.
 export const getOrCreateDm = asyncHandler(async (req, res) => {
   const otherId = req.params.userId;
   if (!isId(otherId)) throw ApiError.badRequest('Invalid member id');
@@ -113,7 +113,7 @@ export const getOrCreateDm = asyncHandler(async (req, res) => {
   });
   if (blocked) throw ApiError.forbidden('You cannot message this member');
 
-  // Admins act as official support and can message any member directly —
+  // Admins act as official support and can message any member directly -
   // regular members still need to be connected first.
   const isSupportSender = req.user.role === 'admin' || req.user.role === 'superadmin';
   if (!isSupportSender) {
@@ -128,7 +128,7 @@ export const getOrCreateDm = asyncHandler(async (req, res) => {
   }
 
   let group = await Group.findOne({ type: 'dm', members: { $all: [req.user._id, otherId] } });
-  if (group && group.members.length !== 2) group = null; // defensive — DMs are always exactly 2 members
+  if (group && group.members.length !== 2) group = null; // defensive - DMs are always exactly 2 members
   if (!group) {
     group = await Group.create({
       name: other.fullName,
@@ -141,9 +141,9 @@ export const getOrCreateDm = asyncHandler(async (req, res) => {
   res.json({ success: true, groupId: group._id });
 });
 
-// GET /chat/groups/:groupId — group detail + members (members only).
+// GET /chat/groups/:groupId - group detail + members (members only).
 export const getGroup = asyncHandler(async (req, res) => {
-  // Check access on the raw (unpopulated) doc first — hasMember() compares
+  // Check access on the raw (unpopulated) doc first - hasMember() compares
   // `String(m)` against each member, which only works while `members` still
   // holds plain ObjectIds; populating first breaks that comparison for
   // every group type (each entry becomes a populated User doc).
@@ -173,7 +173,7 @@ export const getGroup = asyncHandler(async (req, res) => {
   });
 });
 
-// PATCH /chat/groups/:groupId — rename, edit description, or set/remove the
+// PATCH /chat/groups/:groupId - rename, edit description, or set/remove the
 // group photo (owner/admin). Not available for 1-on-1 DMs.
 export const updateGroup = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
@@ -204,7 +204,7 @@ export const updateGroup = asyncHandler(async (req, res) => {
   });
 });
 
-// POST /chat/groups — create a custom group with members by id.
+// POST /chat/groups - create a custom group with members by id.
 export const createGroup = asyncHandler(async (req, res) => {
   const name = String(req.body.name || '').trim();
   if (!name) throw ApiError.badRequest('Group name is required');
@@ -242,7 +242,7 @@ export const createGroup = asyncHandler(async (req, res) => {
 });
 
 // Resolve a user from a single free-form identifier: exact User ID, @username,
-// mobile number, or email — tried in that order.
+// mobile number, or email - tried in that order.
 async function findUserByIdentifier(raw) {
   const v = String(raw || '').trim();
   if (!v) return null;
@@ -261,7 +261,7 @@ async function findUserByIdentifier(raw) {
   return null;
 }
 
-// POST /chat/groups/:groupId/members — add a member by User ID, username,
+// POST /chat/groups/:groupId/members - add a member by User ID, username,
 // mobile number, or email (owner/admin).
 export const addMember = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
@@ -296,7 +296,7 @@ export const addMember = asyncHandler(async (req, res) => {
   res.json({ success: true, members: populated.members });
 });
 
-// DELETE /chat/groups/:groupId/members/:userId — remove member (owner/admin) or leave (self).
+// DELETE /chat/groups/:groupId/members/:userId - remove member (owner/admin) or leave (self).
 export const removeMember = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
   if (!group) throw ApiError.notFound('Group not found');
@@ -317,7 +317,7 @@ export const removeMember = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
-// GET /chat/groups/:groupId/messages?after=ISO — list messages (members only).
+// GET /chat/groups/:groupId/messages?after=ISO - list messages (members only).
 export const getMessages = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
   if (!group) throw ApiError.notFound('Group not found');
@@ -341,7 +341,7 @@ export const getMessages = asyncHandler(async (req, res) => {
   res.json({ success: true, messages });
 });
 
-// POST /chat/groups/:groupId/messages — send a message (members only).
+// POST /chat/groups/:groupId/messages - send a message (members only).
 export const sendMessage = asyncHandler(async (req, res) => {
   const text = String(req.body.text || '').trim();
   if (!text) throw ApiError.badRequest('Message cannot be empty');

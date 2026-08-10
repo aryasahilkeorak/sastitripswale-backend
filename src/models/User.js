@@ -1,5 +1,5 @@
 // ============================================================
-//  User model — members and admins.
+//  User model - members and admins.
 //  Sensitive fields (passwordHash, tokens, emergencyContact) use
 //  `select: false` so they are never returned unless explicitly asked.
 // ============================================================
@@ -15,7 +15,13 @@ const { Schema } = mongoose;
 const vehicleSchema = new Schema(
   {
     vehicleType: { type: String, enum: ['Bike', 'Car', 'Bus', 'Other'], required: true },
+    brand: { type: String, trim: true, maxlength: 60 },
     vehicleModel: { type: String, trim: true, maxlength: 100 },
+    year: { type: Number, min: 1980, max: 2100 },
+    // Real-world km/l (or km/kg for CNG) the owner reports - used to
+    // suggest a fuel cost estimate when they host a trip in this vehicle.
+    mileageKmpl: { type: Number, min: 0, max: 200 },
+    fuelType: { type: String, enum: ['Petrol', 'Diesel', 'CNG', 'Electric', ''], default: '' },
     regNumber: { type: String, trim: true, uppercase: true, maxlength: 20, required: true },
   },
   { timestamps: true }
@@ -56,7 +62,7 @@ const userSchema = new Schema(
     profession: { type: String, trim: true, maxlength: 100 },
     bio: { type: String, maxlength: 1000 },
     avatarUrl: { type: String, default: '' },
-    // Social handles only (no full URLs) — the frontend prefixes the
+    // Social handles only (no full URLs) - the frontend prefixes the
     // platform's base URL when rendering a clickable link.
     instagram: { type: String, trim: true },
     facebook: { type: String, trim: true },
@@ -68,7 +74,7 @@ const userSchema = new Schema(
 
     hasVehicle: { type: Boolean, default: false },
     // Kept for backwards compatibility (first/primary vehicle, used by the
-    // "Bike/Car Owners" directory filters) — `vehicles` below is the
+    // "Bike/Car Owners" directory filters) - `vehicles` below is the
     // full, multi-vehicle list.
     vehicleType: { type: String, enum: ['Bike', 'Car', 'Bus', 'Other', ''], default: '' },
     vehicleModel: { type: String, trim: true, maxlength: 100 },
@@ -89,13 +95,13 @@ const userSchema = new Schema(
     },
 
     // Collected once (in profile, not per-trip) so a couple's safety info
-    // — mobile + gov ID — only ever needs to be uploaded a single time.
+    // - mobile + gov ID - only ever needs to be uploaded a single time.
     // Only ever exposed to the user themself and to admins.
     partnerMobile: { type: String, trim: true, maxlength: 15 },
     partnerDocUrl: { type: String, default: '' },
 
     isVerified: { type: Boolean, default: false }, // true whenever verificationLevel !== 'none'
-    // Computed automatically from reviewed documents — see utils/verification.js.
+    // Computed automatically from reviewed documents - see utils/verification.js.
     // 'verified' = Aadhaar + PAN + live selfie all verified.
     // 'vehicle_verified' = the above, plus Driving Licence + at least one vehicle's RC.
     verificationLevel: { type: String, enum: ['none', 'verified', 'vehicle_verified'], default: 'none' },
@@ -104,11 +110,11 @@ const userSchema = new Schema(
     membershipExpiresAt: { type: Date },
     membershipDuration: { type: String, enum: ['6m', '1y', ''], default: '' },
     // Coupon code applied on the payment that (most recently) activated
-    // membership — kept on the user itself so admin views don't depend on
+    // membership - kept on the user itself so admin views don't depend on
     // a Payment record still existing.
     couponUsed: { type: String, trim: true, uppercase: true, default: '' },
 
-    // Referral system — every user gets their own code; referredBy/referralCount
+    // Referral system - every user gets their own code; referredBy/referralCount
     // track who invited whom. See utils/referral.js for code generation.
     referralCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
     referredBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
@@ -120,7 +126,7 @@ const userSchema = new Schema(
 
     isActive: { type: Boolean, default: true }, // false = banned
 
-    // Security fields — never leaked
+    // Security fields - never leaked
     refreshTokenHash: { type: String, select: false },
     resetTokenHash: { type: String, select: false },
     resetTokenExpires: { type: Date, select: false },
@@ -149,7 +155,7 @@ userSchema.methods.hasActiveMembership = function hasActiveMembership() {
   return true;
 };
 
-// Public projection — safe to send to ANY client (directory listings, etc.)
+// Public projection - safe to send to ANY client (directory listings, etc.)
 userSchema.methods.toPublicJSON = function toPublicJSON() {
   return {
     id: this._id,
@@ -179,7 +185,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
   };
 };
 
-// Private projection — safe to send to the OWNER (or admin).
+// Private projection - safe to send to the OWNER (or admin).
 userSchema.methods.toPrivateJSON = function toPrivateJSON() {
   return {
     ...this.toPublicJSON(),

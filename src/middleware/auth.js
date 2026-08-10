@@ -1,5 +1,5 @@
 // ============================================================
-//  Auth middleware — protect, requireRole, requireMembership.
+//  Auth middleware - protect, requireRole, requireMembership.
 // ============================================================
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
@@ -31,7 +31,7 @@ export const protect = asyncHandler(async (req, res, next) => {
   next();
 });
 
-// Optional auth — attaches req.user if a valid token is present, else continues.
+// Optional auth - attaches req.user if a valid token is present, else continues.
 export const attachUser = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
@@ -41,7 +41,7 @@ export const attachUser = asyncHandler(async (req, res, next) => {
     const user = await User.findById(payload.sub);
     if (user && user.isActive) req.user = user;
   } catch {
-    /* ignore — treat as anonymous */
+    /* ignore - treat as anonymous */
   }
   next();
 });
@@ -56,7 +56,7 @@ export const requireRole =
     next();
   };
 
-// Gates a specific admin capability for plain 'admin' accounts — super
+// Gates a specific admin capability for plain 'admin' accounts - super
 // admins always pass. See utils/permissions.js for valid keys.
 export const requirePermission = (key) => (req, res, next) => {
   if (!req.user) return next(ApiError.unauthorized());

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import User from '../models/User.js';
 
-// 8 uppercase hex chars — short enough to share, plenty of space to avoid collisions.
+// 8 uppercase hex chars - short enough to share, plenty of space to avoid collisions.
 export function generateReferralCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }

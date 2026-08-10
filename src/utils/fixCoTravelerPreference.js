@@ -1,5 +1,5 @@
 // ============================================================
-//  Backfill script — corrects the invalid combination where a
+//  Backfill script - corrects the invalid combination where a
 //  member's co-traveler preference conflicts with their own
 //  gender (e.g. a Male member set to "female"-only). Widens
 //  those accounts to "both" so they're no longer excluded from

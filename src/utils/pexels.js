@@ -1,5 +1,5 @@
 // ============================================================
-//  Pexels — auto-fetch a destination photo by search query.
+//  Pexels - auto-fetch a destination photo by search query.
 //  Never throws; callers get '' on any failure so a missing/rate-
 //  limited key never blocks trip creation.
 // ============================================================

@@ -1,4 +1,4 @@
-// Public homepage stats — real aggregate counts from the database.
+// Public homepage stats - real aggregate counts from the database.
 import asyncHandler from '../utils/asyncHandler.js';
 import User from '../models/User.js';
 import Trip from '../models/Trip.js';

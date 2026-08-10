@@ -18,7 +18,7 @@ async function start() {
 
     const shutdown = (signal) => {
       // eslint-disable-next-line no-console
-      console.log(`\n${signal} received — shutting down...`);
+      console.log(`\n${signal} received - shutting down...`);
       server.close(() => process.exit(0));
     };
     process.on('SIGTERM', () => shutdown('SIGTERM'));
