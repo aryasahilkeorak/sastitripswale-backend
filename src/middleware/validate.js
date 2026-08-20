@@ -20,6 +20,11 @@ export const registerRules = [
   // Full name is now collected during profile completion, not at signup.
   body('fullName').optional({ values: 'falsy' }).trim().isLength({ max: 100 }),
   body('email').trim().isEmail().withMessage('Valid email required').normalizeEmail(),
+  body('username')
+    .trim()
+    .toLowerCase()
+    .matches(/^[a-z0-9_.]{3,30}$/)
+    .withMessage('Username must be 3-30 characters: lowercase letters, numbers, "_" or "." only'),
   body('mobile').trim().matches(/^[0-9]{10,15}$/).withMessage('Valid mobile number required'),
   body('password')
     .isLength({ min: 6, max: 128 })

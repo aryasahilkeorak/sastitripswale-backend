@@ -845,7 +845,7 @@ export const bulkDeleteGalleryPhotos = asyncHandler(async (req, res) => {
 export const getReports = asyncHandler(async (req, res) => {
   const reports = await Report.find({})
     .populate('reporter', 'fullName email avatarUrl')
-    .populate('reportedUser', 'fullName email avatarUrl isActive')
+    .populate('reportedUser', 'fullName username email avatarUrl isActive')
     .sort({ status: 1, createdAt: -1 })
     .limit(200);
   res.json({ success: true, reports });

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import * as trip from '../controllers/tripController.js';
 import { protect, attachUser, requireMembership, requireProfileComplete } from '../middleware/auth.js';
 import { makeUploader } from '../middleware/upload.js';
-import { validate, tripRules, reviewRules } from '../middleware/validate.js';
+import { validate, tripRules, reviewRules, memberReviewRules } from '../middleware/validate.js';
 
 const router = Router();
 const photo = makeUploader('trips');
@@ -21,6 +21,7 @@ router.post('/:id/interest', protect, requireMembership, requireProfileComplete,
 router.patch('/:id/requests/:userId', protect, requireMembership, trip.respondToRequest);
 router.post('/:id/photos', protect, requireMembership, photo.single('photo'), trip.uploadTripPhoto);
 router.post('/:id/reviews', protect, reviewRules, validate, trip.createTripReview);
+router.post('/:id/member-reviews', protect, memberReviewRules, validate, trip.rateMember);
 router.post('/:id/expenses', protect, trip.addExpense);
 
 export default router;
