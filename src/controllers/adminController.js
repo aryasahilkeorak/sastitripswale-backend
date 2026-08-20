@@ -9,6 +9,8 @@ import Trip from '../models/Trip.js';
 import Payment from '../models/Payment.js';
 import Review from '../models/Review.js';
 import Coupon from '../models/Coupon.js';
+import Influencer from '../models/Influencer.js';
+import Commission from '../models/Commission.js';
 import TripInterest from '../models/TripInterest.js';
 import ContactMessage from '../models/ContactMessage.js';
 import Document from '../models/Document.js';
@@ -20,6 +22,13 @@ import Message from '../models/Message.js';
 import Upload from '../models/Upload.js';
 import Setting from '../models/Setting.js';
 import Report from '../models/Report.js';
+import Withdrawal from '../models/Withdrawal.js';
+import GroupTrip from '../models/GroupTrip.js';
+import GroupTripInterest from '../models/GroupTripInterest.js';
+import Follow from '../models/Follow.js';
+import Block from '../models/Block.js';
+import MemberReview from '../models/MemberReview.js';
+import PushSubscription from '../models/PushSubscription.js';
 import { notify } from '../utils/notify.js';
 import { recomputeVerification } from '../utils/verification.js';
 import { vehiclesWithStatus } from './memberController.js';
@@ -297,16 +306,17 @@ export const createAdmin = asyncHandler(async (req, res) => {
   const exists = await User.findOne({ $or: [{ email: emailN }, { mobile }] });
   if (exists) throw ApiError.conflict('Email or mobile already in use');
 
-  const role = req.body.role === 'superadmin' ? 'superadmin' : 'admin';
+  // Super admins are never created through this panel - only directly
+  // against the database - so every admin created here is a plain 'admin'.
   const admin = new User({
     fullName,
     email: emailN,
     mobile,
-    role,
+    role: 'admin',
     isVerified: true,
     membershipPaid: true,
     profileComplete: true,
-    permissions: role === 'admin' ? sanitizePermissions(req.body.permissions) : [],
+    permissions: sanitizePermissions(req.body.permissions),
   });
   await admin.setPassword(password);
   await admin.save();
@@ -327,20 +337,20 @@ export const updateAdminPermissions = asyncHandler(async (req, res) => {
 });
 
 // Change a user's role (promote/demote/revoke). Super-admin only.
+// Super admin accounts are immutable here - can't be promoted to, or
+// demoted/revoked from, 'superadmin' through this panel. That role can only
+// be granted or removed directly against the database.
 export const updateAdminRole = asyncHandler(async (req, res) => {
   const target = await User.findById(req.params.id);
   if (!target) throw ApiError.notFound('User not found');
   if (String(target._id) === String(req.user._id)) {
     throw ApiError.badRequest("You can't change your own role");
   }
-  const role = req.body.role;
-  if (!['member', 'admin', 'superadmin'].includes(role)) throw ApiError.badRequest('Invalid role');
-
-  // Never remove the last super admin.
-  if (target.role === 'superadmin' && role !== 'superadmin') {
-    const supers = await User.countDocuments({ role: 'superadmin' });
-    if (supers <= 1) throw ApiError.badRequest('At least one super admin must remain');
+  if (target.role === 'superadmin') {
+    throw ApiError.forbidden('Super admin accounts cannot be modified from here');
   }
+  const role = req.body.role;
+  if (!['member', 'admin'].includes(role)) throw ApiError.badRequest('Invalid role');
 
   target.role = role;
   if (role !== 'member') {
@@ -379,23 +389,64 @@ export const deleteUser = asyncHandler(async (req, res) => {
     ]);
   }
 
-  // Custom groups owned by the user
-  const ownedGroups = await Group.find({ owner: user._id, type: 'custom' }).select('_id');
-  const ogIds = ownedGroups.map((g) => g._id);
+  // Group-trips organized (a separate model from Trip - see GroupTrip.js)
+  const groupTrips = await GroupTrip.find({ organizer: user._id }).select('_id');
+  const groupTripIds = groupTrips.map((t) => t._id);
+  await Promise.all([
+    GroupTripInterest.deleteMany({ user: user._id }),
+    GroupTripInterest.deleteMany({ groupTrip: { $in: groupTripIds } }),
+    GroupTrip.deleteMany({ _id: { $in: groupTripIds } }),
+  ]);
+
+  // Custom groups and clubs owned by the user - delete outright, same as an
+  // owner disbanding them (clubController.deleteClub has no cascade of its
+  // own, so this is also the only place their Messages get cleaned up).
+  const ownedGroups = await Group.find({ owner: user._id, type: { $in: ['custom', 'club'] } }).select('_id');
+  const ownedGroupIds = ownedGroups.map((g) => g._id);
+
+  // DMs the user is part of - a 1-on-1 chat can't meaningfully survive with
+  // only one side left, so the whole conversation goes rather than leaving
+  // a 1-member zombie DM.
+  const dmGroups = await Group.find({ type: 'dm', members: user._id }).select('_id');
+  const dmGroupIds = dmGroups.map((g) => g._id);
+
+  const deletedGroupIds = [...ownedGroupIds, ...dmGroupIds];
+
+  // Influencer profile, if any - Commission/Coupon rows reference it by its
+  // own _id (not the user's), so it has to be looked up before deleting.
+  const influencer = await Influencer.findOne({ user: user._id }).select('_id');
 
   await Promise.all([
-    Message.deleteMany({ group: { $in: ogIds } }),
-    Group.deleteMany({ _id: { $in: ogIds } }),
-    Group.updateMany({ members: user._id }, { $pull: { members: user._id } }),
+    Message.deleteMany({ group: { $in: deletedGroupIds } }),
+    Group.deleteMany({ _id: { $in: deletedGroupIds } }),
+    // Every other group (trip/custom/club) they belong to but don't own -
+    // just remove them from it instead of deleting the whole group.
+    Group.updateMany(
+      { _id: { $nin: deletedGroupIds } },
+      { $pull: { members: user._id, admins: user._id, joinRequests: user._id } }
+    ),
     Message.deleteMany({ sender: user._id }),
     TripInterest.deleteMany({ user: user._id }),
     Payment.deleteMany({ user: user._id }),
     Review.deleteMany({ user: user._id }),
+    MemberReview.deleteMany({ $or: [{ rater: user._id }, { ratee: user._id }] }),
     Connection.deleteMany({ $or: [{ sender: user._id }, { receiver: user._id }] }),
+    Follow.deleteMany({ $or: [{ follower: user._id }, { following: user._id }] }),
+    Block.deleteMany({ $or: [{ blocker: user._id }, { blocked: user._id }] }),
+    Report.deleteMany({ $or: [{ reporter: user._id }, { reportedUser: user._id }] }),
     Notification.deleteMany({ user: user._id }),
     Document.deleteMany({ user: user._id }),
     Gallery.deleteMany({ user: user._id }),
     Upload.deleteMany({ owner: user._id }),
+    Withdrawal.deleteMany({ user: user._id }),
+    PushSubscription.deleteMany({ user: user._id }),
+    // Not required on ContactMessage - keep the message, just detach it.
+    ContactMessage.updateMany({ user: user._id }, { user: null }),
+    // Other members' referredBy pointing at this (now-deleted) referrer.
+    User.updateMany({ referredBy: user._id }, { referredBy: null }),
+    Influencer.deleteOne({ user: user._id }),
+    Commission.deleteMany({ $or: [{ user: user._id }, ...(influencer ? [{ influencer: influencer._id }] : [])] }),
+    ...(influencer ? [Coupon.updateMany({ influencer: influencer._id }, { influencer: null })] : []),
   ]);
 
   await user.deleteOne();
@@ -541,6 +592,203 @@ export const deleteCoupon = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
+// ── Influencer/Promoter program ──────────────────────────────────────────
+
+export const getInfluencers = asyncHandler(async (req, res) => {
+  const influencers = await Influencer.find({})
+    .sort({ createdAt: -1 })
+    .populate('user', 'fullName username email mobile avatarUrl city');
+  const coupons = await Coupon.find({ influencer: { $in: influencers.map((i) => i._id) } });
+  const couponByInfluencer = Object.fromEntries(coupons.map((c) => [String(c.influencer), c]));
+
+  res.json({
+    success: true,
+    influencers: influencers.map((i) => ({ ...i.toObject(), coupon: couponByInfluencer[String(i._id)] || null })),
+  });
+});
+
+// PATCH /admin/influencers/:id - approve (issues the coupon) or reject.
+export const respondToInfluencer = asyncHandler(async (req, res) => {
+  const influencer = await Influencer.findById(req.params.id).populate('user', 'fullName username');
+  if (!influencer) throw ApiError.notFound('Application not found');
+  const action = req.body.action === 'approve' ? 'approve' : 'reject';
+
+  if (action === 'reject') {
+    influencer.status = 'rejected';
+    influencer.reviewedBy = req.user._id;
+    influencer.reviewedAt = new Date();
+    await influencer.save();
+    notify(influencer.user._id, {
+      type: 'influencer',
+      title: 'Influencer application declined',
+      message: "Your influencer application wasn't approved this time.",
+    });
+    return res.json({ success: true, influencer });
+  }
+
+  // Approve: issue (or reuse) their personal coupon. Commission is set
+  // manually by the admin based on the reach info collected at application
+  // time (followers, avg reel views, dashboard screenshot, socials) -
+  // policy caps it 10-30%.
+  const discountPct = Math.max(0, Math.min(100, Number(req.body.discountPct) || 10));
+  const commissionPct = Math.max(10, Math.min(30, Number(req.body.commissionPct) || 10));
+  const handle = (influencer.user.username || influencer.user.fullName || 'promo').replace(/[^a-zA-Z0-9]/g, '');
+  const suggestedCode = `${handle}${discountPct}`.toUpperCase();
+  const code = String(req.body.couponCode || suggestedCode).toUpperCase().trim();
+  if (!code) throw ApiError.badRequest('Coupon code required');
+
+  let coupon = await Coupon.findOne({ influencer: influencer._id });
+  if (!coupon) {
+    const codeTaken = await Coupon.findOne({ code, influencer: { $ne: influencer._id } });
+    if (codeTaken) throw ApiError.conflict('That coupon code is already in use');
+    coupon = await Coupon.create({ code, discountPct, influencer: influencer._id });
+  } else {
+    coupon.code = code;
+    coupon.discountPct = discountPct;
+    coupon.isActive = true;
+    await coupon.save();
+  }
+
+  influencer.status = 'approved';
+  influencer.commissionPct = commissionPct;
+  influencer.reviewedBy = req.user._id;
+  influencer.reviewedAt = new Date();
+  await influencer.save();
+
+  notify(influencer.user._id, {
+    type: 'influencer',
+    title: "You're an approved influencer!",
+    message: `Your coupon code is ${code} - ${discountPct}% off for customers, ${commissionPct}% commission for you.`,
+  });
+
+  res.json({ success: true, influencer, coupon });
+});
+
+// PUT /admin/influencers/:id - edit an approved influencer's discount%/commission%.
+export const updateInfluencer = asyncHandler(async (req, res) => {
+  const influencer = await Influencer.findById(req.params.id);
+  if (!influencer) throw ApiError.notFound('Influencer not found');
+
+  if (req.body.commissionPct !== undefined) {
+    influencer.commissionPct = Math.max(10, Math.min(30, Number(req.body.commissionPct) || 10));
+  }
+  await influencer.save();
+
+  const coupon = await Coupon.findOne({ influencer: influencer._id });
+  if (coupon && req.body.discountPct !== undefined) {
+    coupon.discountPct = Math.max(0, Math.min(100, Number(req.body.discountPct) || 0));
+    await coupon.save();
+  }
+
+  res.json({ success: true, influencer, coupon });
+});
+
+// DELETE /admin/influencers/:id - revoke (deactivates their coupon too).
+export const deleteInfluencer = asyncHandler(async (req, res) => {
+  const influencer = await Influencer.findByIdAndDelete(req.params.id);
+  if (!influencer) throw ApiError.notFound('Influencer not found');
+  await Coupon.updateOne({ influencer: influencer._id }, { isActive: false });
+  res.json({ success: true });
+});
+
+// GET /admin/commissions - full ledger, optionally filtered by influencer.
+export const getCommissions = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.influencer) filter.influencer = req.query.influencer;
+  const commissions = await Commission.find(filter)
+    .sort({ createdAt: -1 })
+    .populate({ path: 'influencer', populate: { path: 'user', select: 'fullName username avatarUrl' } })
+    .populate('user', 'fullName')
+    .populate('payment', 'amount planDuration planPreference');
+  res.json({ success: true, commissions });
+});
+
+// PATCH /admin/commissions/:id - mark a ledger row as paid.
+export const markCommissionPaid = asyncHandler(async (req, res) => {
+  const commission = await Commission.findById(req.params.id);
+  if (!commission) throw ApiError.notFound('Commission not found');
+  commission.status = 'paid';
+  await commission.save();
+  res.json({ success: true, commission });
+});
+
+// GET /admin/withdrawals - every wallet withdrawal request, with the full
+// submitted payout details (name/email/UPI/QR/PAN), optionally filtered
+// by status.
+export const getWithdrawals = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.status) filter.status = req.query.status;
+  const withdrawals = await Withdrawal.find(filter)
+    .sort({ createdAt: -1 })
+    .populate('user', 'fullName username email avatarUrl isVerified')
+    .populate('reviewedBy', 'fullName');
+  res.json({ success: true, withdrawals });
+});
+
+// PATCH /admin/withdrawals/:id - approve / reject / mark paid.
+// Rejecting refunds the reserved amount back to the member's wallet.
+export const respondToWithdrawal = asyncHandler(async (req, res) => {
+  const withdrawal = await Withdrawal.findById(req.params.id);
+  if (!withdrawal) throw ApiError.notFound('Withdrawal request not found');
+
+  const action = req.body.action;
+  if (!['approve', 'reject', 'paid'].includes(action)) throw ApiError.badRequest('Invalid action');
+
+  if (action === 'reject') {
+    if (withdrawal.status !== 'pending') throw ApiError.conflict('Only a pending request can be declined');
+    withdrawal.status = 'rejected';
+    await User.updateOne({ _id: withdrawal.user }, { $inc: { walletBalancePaise: withdrawal.amountPaise } });
+    notify(withdrawal.user, {
+      type: 'system',
+      title: 'Withdrawal declined',
+      message: `Your ₹${(withdrawal.amountPaise / 100).toFixed(0)} withdrawal request was declined - the amount has been refunded to your wallet.`,
+    });
+  } else if (action === 'approve') {
+    if (withdrawal.status !== 'pending') throw ApiError.conflict('Only a pending request can be approved');
+    withdrawal.status = 'approved';
+  } else {
+    if (withdrawal.status !== 'approved') throw ApiError.conflict('Approve the request before marking it paid');
+    const transactionRef = String(req.body.transactionRef || '').trim();
+    if (!transactionRef) throw ApiError.badRequest('Enter the UPI/bank transaction reference (UTR) for this payout');
+    withdrawal.status = 'paid';
+    withdrawal.transactionRef = transactionRef;
+    notify(withdrawal.user, {
+      type: 'system',
+      title: 'Withdrawal paid',
+      message: `Your ₹${(withdrawal.amountPaise / 100).toFixed(0)} withdrawal has been paid out (Txn ID: ${transactionRef}). Please check your bank account.`,
+    });
+  }
+
+  if (req.body.adminNote !== undefined) withdrawal.adminNote = String(req.body.adminNote).slice(0, 500);
+  withdrawal.reviewedBy = req.user._id;
+  withdrawal.reviewedAt = new Date();
+  await withdrawal.save();
+  res.json({ success: true, withdrawal });
+});
+
+// GET /admin/wallet-stats - totals for the admin Wallet dashboard.
+export const getWalletStats = asyncHandler(async (req, res) => {
+  const [paidAgg, pendingAgg, approvedAgg, outstandingAgg] = await Promise.all([
+    Withdrawal.aggregate([{ $match: { status: 'paid' } }, { $group: { _id: null, total: { $sum: '$amountPaise' }, count: { $sum: 1 } } }]),
+    Withdrawal.aggregate([{ $match: { status: 'pending' } }, { $group: { _id: null, total: { $sum: '$amountPaise' }, count: { $sum: 1 } } }]),
+    Withdrawal.aggregate([{ $match: { status: 'approved' } }, { $group: { _id: null, total: { $sum: '$amountPaise' }, count: { $sum: 1 } } }]),
+    User.aggregate([{ $match: { walletBalancePaise: { $gt: 0 } } }, { $group: { _id: null, total: { $sum: '$walletBalancePaise' }, count: { $sum: 1 } } }]),
+  ]);
+  res.json({
+    success: true,
+    stats: {
+      totalPaidPaise: paidAgg[0]?.total || 0,
+      totalPaidCount: paidAgg[0]?.count || 0,
+      totalPendingPaise: pendingAgg[0]?.total || 0,
+      totalPendingCount: pendingAgg[0]?.count || 0,
+      totalApprovedPaise: approvedAgg[0]?.total || 0,
+      totalApprovedCount: approvedAgg[0]?.count || 0,
+      totalOutstandingPaise: outstandingAgg[0]?.total || 0,
+      usersWithBalance: outstandingAgg[0]?.count || 0,
+    },
+  });
+});
+
 export const getAdminGallery = asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 24));
@@ -663,7 +911,7 @@ export const deleteContactMessage = asyncHandler(async (req, res) => {
 // Site-wide settings (super-admin only)
 export const getSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getSingleton();
-  res.json({ success: true, settings: { referralEnabled: settings.referralEnabled } });
+  res.json({ success: true, settings: { referralEnabled: settings.referralEnabled, referralTiers: settings.referralTiers } });
 });
 
 export const toggleReferrals = asyncHandler(async (req, res) => {
@@ -671,4 +919,37 @@ export const toggleReferrals = asyncHandler(async (req, res) => {
   settings.referralEnabled = !settings.referralEnabled;
   await settings.save();
   res.json({ success: true, referralEnabled: settings.referralEnabled });
+});
+
+// PATCH /admin/settings/referral-tiers - replace the whole reward ladder.
+// Body: { tiers: [{ from, to (nullable), amountPaise }, ...] }, sorted by
+// `from` ascending, no gaps required but ranges shouldn't overlap.
+export const updateReferralTiers = asyncHandler(async (req, res) => {
+  const raw = Array.isArray(req.body.tiers) ? req.body.tiers : [];
+  if (!raw.length) throw ApiError.badRequest('At least one tier is required');
+
+  const tiers = raw
+    .map((t) => ({
+      from: Math.max(1, Math.round(Number(t.from))),
+      to: t.to === null || t.to === undefined || t.to === '' ? null : Math.max(1, Math.round(Number(t.to))),
+      amountPaise: Math.max(0, Math.round(Number(t.amountPaise) || 0)),
+    }))
+    .sort((a, b) => a.from - b.from);
+
+  for (const t of tiers) {
+    if (!Number.isFinite(t.from) || (t.to !== null && !Number.isFinite(t.to))) {
+      throw ApiError.badRequest('Each tier needs a valid "from" (and "to", if not open-ended)');
+    }
+    if (t.to !== null && t.to < t.from) throw ApiError.badRequest('A tier\'s "to" must be greater than or equal to its "from"');
+  }
+  for (let i = 1; i < tiers.length; i++) {
+    if (tiers[i].from <= (tiers[i - 1].to ?? Infinity)) {
+      throw ApiError.badRequest('Tier ranges cannot overlap');
+    }
+  }
+
+  const settings = await Setting.getSingleton();
+  settings.referralTiers = tiers;
+  await settings.save();
+  res.json({ success: true, referralTiers: settings.referralTiers });
 });

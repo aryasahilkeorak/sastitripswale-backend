@@ -86,6 +86,15 @@ export const env = {
     adminEmail: process.env.SEED_ADMIN_EMAIL || 'admin@sastitripwale.com',
     adminPassword: process.env.SEED_ADMIN_PASSWORD || 'Admin@123',
   },
+
+  // Support chat AI auto-reply. Disabled (falls back to a "we'll reply
+  // within 24 hours" message) whenever no key is configured.
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+    get enabled() {
+      return Boolean(this.apiKey);
+    },
+  },
 };
 
 // Loud warnings in production if critical secrets are still defaults.

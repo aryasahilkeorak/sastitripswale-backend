@@ -14,7 +14,7 @@ const uploadSchema = new Schema(
     owner: { type: Schema.Types.ObjectId, ref: 'User' },
     kind: {
       type: String,
-      enum: ['avatar', 'document', 'trip', 'gallery', 'other'],
+      enum: ['avatar', 'cover', 'document', 'trip', 'gallery', 'group', 'club', 'qr', 'other'],
       default: 'other',
     },
   },

@@ -11,12 +11,16 @@ import Trip from '../models/Trip.js';
 import TripInterest from '../models/TripInterest.js';
 import User from '../models/User.js';
 import Connection from '../models/Connection.js';
+import Follow from '../models/Follow.js';
 import Block from '../models/Block.js';
 import { notify } from '../utils/notify.js';
 import { saveUpload } from '../utils/uploadStore.js';
+import { findUserByIdentifier } from '../utils/findUserByIdentifier.js';
+import { getSupportBotReply, FALLBACK_REPLY } from '../utils/supportBot.js';
+import { matchFaqAnswer } from '../utils/supportFaq.js';
 
 const isId = (v) => mongoose.isValidObjectId(v);
-const MEMBER_FIELDS = 'fullName avatarUrl city isVerified role';
+const MEMBER_FIELDS = 'fullName avatarUrl city isVerified role isServiceAccount';
 
 // Ensure the trip's group exists and its membership is in sync with
 // (organizer + everyone who has shown interest). Handles legacy trips.
@@ -80,8 +84,11 @@ export const getMyGroups = asyncHandler(async (req, res) => {
       memberCount: g.members.length,
       // For DMs the client shows the *other* member, not the group's own name.
       members: g.type === 'dm' ? g.members : undefined,
+      dmStatus: g.type === 'dm' ? g.dmStatus : undefined,
+      requestedBy: g.type === 'dm' ? g.requestedBy : undefined,
       lastMessageAt: g.lastMessageAt,
       lastMessageText: g.lastMessageText,
+      isUnread: (g.unreadFor || []).some((id) => String(id) === String(req.user._id)),
     })),
   });
 });
@@ -96,49 +103,119 @@ export const getTripGroup = asyncHandler(async (req, res) => {
   res.json({ success: true, groupId: group._id });
 });
 
-// GET /chat/dm/:userId - get (or create) the 1-on-1 chat with a connected member.
-export const getOrCreateDm = asyncHandler(async (req, res) => {
-  const otherId = req.params.userId;
-  if (!isId(otherId)) throw ApiError.badRequest('Invalid member id');
-  if (String(otherId) === String(req.user._id)) throw ApiError.badRequest("You can't message yourself");
+// Shared by getOrCreateDm and getOrCreateSupportChat below.
+// Instagram-style message requests: anyone can DM anyone. If the two aren't
+// already connected/following each other (and neither side is site admin
+// support), the DM starts as a pending "request" - see sendMessage() below
+// for how it becomes a normal chat.
+async function findOrCreateDmGroup(user, otherId) {
+  if (String(otherId) === String(user._id)) throw ApiError.badRequest("You can't message yourself");
 
   const other = await User.findById(otherId);
   if (!other || !other.isActive) throw ApiError.notFound('Member not found');
 
   const blocked = await Block.exists({
     $or: [
-      { blocker: req.user._id, blocked: otherId },
-      { blocker: otherId, blocked: req.user._id },
+      { blocker: user._id, blocked: otherId },
+      { blocker: otherId, blocked: user._id },
     ],
   });
   if (blocked) throw ApiError.forbidden('You cannot message this member');
 
-  // Admins act as official support and can message any member directly -
-  // regular members still need to be connected first.
-  const isSupportSender = req.user.role === 'admin' || req.user.role === 'superadmin';
-  if (!isSupportSender) {
-    const connected = await Connection.exists({
-      status: 'accepted',
-      $or: [
-        { sender: req.user._id, receiver: otherId },
-        { sender: otherId, receiver: req.user._id },
-      ],
-    });
-    if (!connected) throw ApiError.forbidden('You must be connected to message this member');
-  }
-
-  let group = await Group.findOne({ type: 'dm', members: { $all: [req.user._id, otherId] } });
+  let group = await Group.findOne({ type: 'dm', members: { $all: [user._id, otherId] } });
   if (group && group.members.length !== 2) group = null; // defensive - DMs are always exactly 2 members
   if (!group) {
+    // Admins act as official support and can message any member directly -
+    // and messaging an admin/support account should likewise never sit as
+    // a pending request. Otherwise, an existing accepted Connection or
+    // either side already following the other skips the request step too.
+    const isSupportSide = ['admin', 'superadmin'].includes(user.role) || ['admin', 'superadmin'].includes(other.role);
+    const [connected, followed] = await Promise.all([
+      Connection.exists({
+        status: 'accepted',
+        $or: [
+          { sender: user._id, receiver: otherId },
+          { sender: otherId, receiver: user._id },
+        ],
+      }),
+      Follow.exists({
+        $or: [
+          { follower: user._id, following: otherId },
+          { follower: otherId, following: user._id },
+        ],
+      }),
+    ]);
+    const startsAccepted = isSupportSide || Boolean(connected) || Boolean(followed);
+
     group = await Group.create({
       name: other.fullName,
       type: 'dm',
-      owner: req.user._id,
-      members: [req.user._id, otherId],
+      owner: user._id,
+      members: [user._id, otherId],
+      dmStatus: startsAccepted ? 'accepted' : 'pending',
+      requestedBy: startsAccepted ? undefined : user._id,
     });
+
+    if (!startsAccepted) {
+      notify(otherId, {
+        type: 'message_request',
+        title: 'New message request',
+        message: `${user.fullName} sent you a message request`,
+        meta: { groupId: String(group._id) },
+      });
+    }
   }
 
-  res.json({ success: true, groupId: group._id });
+  return group;
+}
+
+// GET /chat/dm/:userId - get (or create) the 1-on-1 chat with any member.
+export const getOrCreateDm = asyncHandler(async (req, res) => {
+  // Accepts a raw user id (the normal case - clicking a member's profile,
+  // a search result, etc) or any other identifier (@username, mobile,
+  // email) - the same resolution "Add member" already offers, so the "New
+  // chat" search box's manual-entry fallback works here too.
+  const other = isId(req.params.userId) ? await User.findById(req.params.userId) : await findUserByIdentifier(req.params.userId);
+  if (!other) throw ApiError.badRequest('Invalid member id');
+  const group = await findOrCreateDmGroup(req.user, other._id);
+  res.json({ success: true, groupId: group._id, dmStatus: group.dmStatus });
+});
+
+// GET /chat/support - get (or create) the chat with the site's designated
+// support account (flagged isServiceAccount) - lets "Chat with us" work
+// without the client needing to know any specific admin's user id.
+export const getOrCreateSupportChat = asyncHandler(async (req, res) => {
+  const support = await User.findOne({ isServiceAccount: true, isActive: true });
+  if (!support) throw ApiError.notFound('Support chat is not available right now');
+  const group = await findOrCreateDmGroup(req.user, support._id);
+  res.json({ success: true, groupId: group._id, dmStatus: group.dmStatus });
+});
+
+// PATCH /chat/dm/:groupId/accept - explicitly accept a pending message
+// request without needing to reply first.
+export const acceptDm = asyncHandler(async (req, res) => {
+  const group = await Group.findById(req.params.groupId);
+  if (!group || group.type !== 'dm') throw ApiError.notFound('Chat not found');
+  if (!group.hasMember(req.user._id)) throw ApiError.forbidden('Not allowed');
+  if (String(group.requestedBy) === String(req.user._id)) {
+    throw ApiError.badRequest("You can't accept your own request");
+  }
+  group.dmStatus = 'accepted';
+  await group.save();
+  res.json({ success: true });
+});
+
+// DELETE /chat/dm/:groupId - decline a pending message request (deletes it).
+export const declineDm = asyncHandler(async (req, res) => {
+  const group = await Group.findById(req.params.groupId);
+  if (!group || group.type !== 'dm') throw ApiError.notFound('Chat not found');
+  if (!group.hasMember(req.user._id)) throw ApiError.forbidden('Not allowed');
+  if (String(group.requestedBy) === String(req.user._id)) {
+    throw ApiError.badRequest("You can't decline your own request");
+  }
+  await Message.deleteMany({ group: group._id });
+  await group.deleteOne();
+  res.json({ success: true });
 });
 
 // GET /chat/groups/:groupId - group detail + members (members only).
@@ -150,6 +227,19 @@ export const getGroup = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
   if (!group) throw ApiError.notFound('Group not found');
   await ensureAccess(group, req.user._id);
+
+  // Opening a conversation implicitly reads it - clear any manual "mark as
+  // unread" flag for this member.
+  if ((group.unreadFor || []).some((id) => String(id) === String(req.user._id))) {
+    group.unreadFor = group.unreadFor.filter((id) => String(id) !== String(req.user._id));
+    await group.save();
+  }
+
+  // Same rule as clubController.getClub: compute membership/admin flags
+  // before populate() turns `owner`/`admins` into full User docs, since
+  // String(populatedDoc) no longer matches a plain id string afterwards.
+  const isOwner = String(group.owner) === String(req.user._id);
+  const isAdmin = group.isAdmin(req.user._id);
 
   await group.populate([
     { path: 'members', select: MEMBER_FIELDS },
@@ -164,23 +254,42 @@ export const getGroup = asyncHandler(async (req, res) => {
       name: group.name,
       description: group.description || '',
       photoUrl: group.photoUrl || '',
+      coverPhotoUrl: group.coverPhotoUrl || '',
       type: group.type,
       trip: group.trip,
       owner: group.owner,
-      isOwner: String(group.owner?._id || group.owner) === String(req.user._id),
+      isOwner,
+      isAdmin,
       members: group.members,
     },
   });
 });
 
+// PATCH /chat/groups/:groupId/unread - manually flag a chat unread/read
+// (WhatsApp-style toggle, not automatic read-tracking).
+export const setUnread = asyncHandler(async (req, res) => {
+  const group = await Group.findById(req.params.groupId);
+  if (!group) throw ApiError.notFound('Group not found');
+  if (!group.hasMember(req.user._id)) throw ApiError.forbidden('You are not a member of this chat');
+
+  const unread = Boolean(req.body.unread);
+  const already = (group.unreadFor || []).some((id) => String(id) === String(req.user._id));
+  if (unread && !already) group.unreadFor.push(req.user._id);
+  else if (!unread && already) group.unreadFor = group.unreadFor.filter((id) => String(id) !== String(req.user._id));
+  await group.save();
+
+  res.json({ success: true, isUnread: unread });
+});
+
 // PATCH /chat/groups/:groupId - rename, edit description, or set/remove the
-// group photo (owner/admin). Not available for 1-on-1 DMs.
+// group photo and cover photo (owner/club-admin/site-admin). Not available
+// for 1-on-1 DMs.
 export const updateGroup = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
   if (!group) throw ApiError.notFound('Group not found');
   if (group.type === 'dm') throw ApiError.badRequest('Direct messages cannot be managed');
-  const isOwner = String(group.owner) === String(req.user._id);
-  if (!isOwner && req.user.role !== 'admin') throw ApiError.forbidden('Only the group owner can update this group');
+  const isSiteAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+  if (!group.isAdmin(req.user._id) && !isSiteAdmin) throw ApiError.forbidden('Only the group owner or an admin can update this group');
 
   if (req.body.name !== undefined) {
     const name = String(req.body.name).trim();
@@ -193,14 +302,28 @@ export const updateGroup = asyncHandler(async (req, res) => {
   if (req.body.removePhoto === 'true' || req.body.removePhoto === true) {
     group.photoUrl = '';
   }
-  if (req.file) {
-    group.photoUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'group-photo' });
+  if (req.body.removeCoverPhoto === 'true' || req.body.removeCoverPhoto === true) {
+    group.coverPhotoUrl = '';
+  }
+  const photoFile = req.files?.photo?.[0];
+  const coverFile = req.files?.cover?.[0];
+  if (photoFile) {
+    group.photoUrl = await saveUpload(photoFile, { owner: req.user._id, kind: 'group' });
+  }
+  if (coverFile) {
+    group.coverPhotoUrl = await saveUpload(coverFile, { owner: req.user._id, kind: 'group' });
   }
   await group.save();
 
   res.json({
     success: true,
-    group: { _id: group._id, name: group.name, description: group.description || '', photoUrl: group.photoUrl || '' },
+    group: {
+      _id: group._id,
+      name: group.name,
+      description: group.description || '',
+      photoUrl: group.photoUrl || '',
+      coverPhotoUrl: group.coverPhotoUrl || '',
+    },
   });
 });
 
@@ -241,34 +364,14 @@ export const createGroup = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, groupId: group._id });
 });
 
-// Resolve a user from a single free-form identifier: exact User ID, @username,
-// mobile number, or email - tried in that order.
-async function findUserByIdentifier(raw) {
-  const v = String(raw || '').trim();
-  if (!v) return null;
-  if (isId(v)) {
-    const byId = await User.findById(v);
-    if (byId) return byId;
-  }
-  const byUsername = await User.findOne({ username: v.toLowerCase().replace(/^@/, '') });
-  if (byUsername) return byUsername;
-  const byMobile = await User.findOne({ mobile: v });
-  if (byMobile) return byMobile;
-  if (v.includes('@')) {
-    const byEmail = await User.findOne({ email: v.toLowerCase() });
-    if (byEmail) return byEmail;
-  }
-  return null;
-}
-
 // POST /chat/groups/:groupId/members - add a member by User ID, username,
-// mobile number, or email (owner/admin).
+// mobile number, or email (owner/club-admin/site-admin).
 export const addMember = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
   if (!group) throw ApiError.notFound('Group not found');
   if (group.type === 'dm') throw ApiError.badRequest('Direct messages cannot be managed');
-  const isOwner = String(group.owner) === String(req.user._id);
-  if (!isOwner && req.user.role !== 'admin') throw ApiError.forbidden('Only the group owner can add members');
+  const isSiteAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+  if (!group.isAdmin(req.user._id) && !isSiteAdmin) throw ApiError.forbidden('Only the group owner or an admin can add members');
 
   const { userId, email, mobile, username, identifier } = req.body;
   let target = null;
@@ -303,9 +406,9 @@ export const removeMember = asyncHandler(async (req, res) => {
   if (group.type === 'dm') throw ApiError.badRequest('Direct messages cannot be managed');
 
   const targetId = req.params.userId;
-  const isOwner = String(group.owner) === String(req.user._id);
   const isSelf = String(targetId) === String(req.user._id);
-  if (!isOwner && !isSelf && req.user.role !== 'admin') {
+  const isSiteAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+  if (!isSelf && !group.isAdmin(req.user._id) && !isSiteAdmin) {
     throw ApiError.forbidden('Not allowed');
   }
   if (String(group.owner) === String(targetId)) {
@@ -313,6 +416,7 @@ export const removeMember = asyncHandler(async (req, res) => {
   }
 
   group.members = group.members.filter((m) => String(m) !== String(targetId));
+  group.admins = group.admins.filter((m) => String(m) !== String(targetId));
   await group.save();
   res.json({ success: true });
 });
@@ -351,11 +455,74 @@ export const sendMessage = asyncHandler(async (req, res) => {
   if (!group) throw ApiError.notFound('Group not found');
   await ensureAccess(group, req.user._id);
 
+  // Instagram-style implicit accept: the recipient of a pending message
+  // request sending anything (not just an explicit accept) turns it into a
+  // normal chat. The original requester can keep messaging while pending.
+  if (group.type === 'dm' && group.dmStatus === 'pending' && String(group.requestedBy) !== String(req.user._id)) {
+    group.dmStatus = 'accepted';
+  }
+
   const message = await Message.create({ group: group._id, sender: req.user._id, text });
   group.lastMessageAt = message.createdAt;
   group.lastMessageText = text.slice(0, 120);
   await group.save();
-
   await message.populate('sender', 'fullName avatarUrl role');
-  res.status(201).json({ success: true, message });
+
+  // AI auto-reply - only when someone messages the designated support
+  // account. Never triggers when the sender IS that service account, so a
+  // human replying as it (to take over the conversation) is never talked
+  // over by the bot - but any other sender, including the founder's own
+  // superadmin account, gets a reply like anyone else would.
+  let autoReply = null;
+  if (group.type === 'dm' && !req.user.isServiceAccount) {
+    const otherId = group.members.find((m) => String(m) !== String(req.user._id));
+    const other = otherId ? await User.findById(otherId).select('isServiceAccount') : null;
+
+    if (other?.isServiceAccount) {
+      // Predefined questions (the quick-question chips) get an instant,
+      // exact canned answer - no AI call needed. Anything else tries the
+      // AI bot, and only falls back to "please wait" if that's disabled
+      // or fails.
+      let replyText = matchFaqAnswer(text);
+      if (!replyText) {
+        const recent = await Message.find({ group: group._id }).sort({ createdAt: -1 }).limit(12);
+        const history = recent
+          .reverse()
+          .map((m) => ({ role: String(m.sender) === String(otherId) ? 'assistant' : 'user', content: m.text }));
+        while (history.length && history[0].role !== 'user') history.shift(); // API requires the first turn to be 'user'
+        replyText = await getSupportBotReply(history);
+      }
+
+      const botMessage = await Message.create({
+        group: group._id,
+        sender: otherId,
+        text: replyText || FALLBACK_REPLY,
+        isAuto: true,
+      });
+      group.lastMessageAt = botMessage.createdAt;
+      group.lastMessageText = botMessage.text.slice(0, 120);
+      await group.save();
+      await botMessage.populate('sender', 'fullName avatarUrl role');
+      autoReply = botMessage;
+    }
+  }
+
+  res.status(201).json({ success: true, message, autoReply });
+});
+
+// DELETE /chat/groups/:groupId/messages - clear this chat's message history
+// (members only). The conversation itself stays in everyone's list - only
+// its messages are wiped, since there's no per-member message visibility to
+// clear just "your side" of it.
+export const clearChat = asyncHandler(async (req, res) => {
+  const group = await Group.findById(req.params.groupId);
+  if (!group) throw ApiError.notFound('Group not found');
+  if (!group.hasMember(req.user._id)) throw ApiError.forbidden('You are not a member of this chat');
+
+  await Message.deleteMany({ group: group._id });
+  group.lastMessageAt = undefined;
+  group.lastMessageText = '';
+  await group.save();
+
+  res.json({ success: true });
 });

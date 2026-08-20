@@ -51,7 +51,7 @@ const userSchema = new Schema(
     // always has full access). See utils/permissions.js for the valid keys.
     permissions: {
       type: [String],
-      enum: ['users', 'trips', 'coupons', 'reviews', 'messages', 'gallery', 'revenue'],
+      enum: ['users', 'trips', 'coupons', 'reviews', 'messages', 'gallery', 'revenue', 'influencers', 'wallet'],
       default: [],
     },
 
@@ -62,6 +62,7 @@ const userSchema = new Schema(
     profession: { type: String, trim: true, maxlength: 100 },
     bio: { type: String, maxlength: 1000 },
     avatarUrl: { type: String, default: '' },
+    coverUrl: { type: String, default: '' },
     // Social handles only (no full URLs) - the frontend prefixes the
     // platform's base URL when rendering a clickable link.
     instagram: { type: String, trim: true },
@@ -78,6 +79,12 @@ const userSchema = new Schema(
     // full, multi-vehicle list.
     vehicleType: { type: String, enum: ['Bike', 'Car', 'Bus', 'Other', ''], default: '' },
     vehicleModel: { type: String, trim: true, maxlength: 100 },
+    // Real-world mileage/fuel/year for the primary vehicle above - powers an
+    // accurate trip fuel-cost suggestion on Plan a Trip instead of a guess
+    // from the model name (see suggestMileageForUser on the frontend).
+    vehicleYear: { type: Number, min: 1980, max: 2100 },
+    mileageKmpl: { type: Number, min: 0, max: 200 },
+    fuelType: { type: String, enum: ['Petrol', 'Diesel', 'CNG', 'Electric', 'Hybrid', ''], default: '' },
     vehicles: { type: [vehicleSchema], default: [] },
     travelInterests: { type: [String], default: [] },
     drinks: { type: String, default: 'No' },
@@ -119,6 +126,21 @@ const userSchema = new Schema(
     referralCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
     referredBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     referralCount: { type: Number, default: 0, min: 0 },
+    // Set once the referral reward has actually been credited (on the
+    // referred member's first paid activation) - prevents re-crediting on
+    // membership renewals or repeat payments.
+    referralRewardCredited: { type: Boolean, default: false },
+    // How many referral rewards THIS user (as a referrer) has been paid so
+    // far - determines which tier in Setting.referralTiers their next
+    // converted referral falls into (see paymentController.activateMembership).
+    referralRewardsGiven: { type: Number, default: 0, min: 0 },
+
+    // Wallet - a running balance in paise, credited from referral rewards
+    // and (for influencers) commission payouts; debited when a withdrawal
+    // request is submitted. See models/Withdrawal.js for the payout flow.
+    // "Lifetime earnings" (balance + everything ever withdrawn) is derived
+    // on read in walletController - not stored separately.
+    walletBalancePaise: { type: Number, default: 0, min: 0 },
 
     // Full profile (name, city, interests, vehicle, ID doc) collected AFTER
     // payment. Until complete, the user cannot plan or join trips.
@@ -126,10 +148,20 @@ const userSchema = new Schema(
 
     isActive: { type: Boolean, default: true }, // false = banned
 
+    // Utility admin/support accounts (e.g. a shared "Support" inbox) that
+    // should never appear as a member card - even if role is 'superadmin'
+    // and would otherwise show up tagged "Founder" in the directory.
+    isServiceAccount: { type: Boolean, default: false },
+
     // Security fields - never leaked
     refreshTokenHash: { type: String, select: false },
     resetTokenHash: { type: String, select: false },
     resetTokenExpires: { type: Date, select: false },
+
+    // 2FA (admin/superadmin only) - a 6-digit PIN acting as the second
+    // factor after password. Set via setMpin()/POST /auth/2fa/setup.
+    twoFactorEnabled: { type: Boolean, default: false },
+    mpinHash: { type: String, select: false },
   },
   { timestamps: true }
 );
@@ -145,6 +177,16 @@ userSchema.methods.setPassword = async function setPassword(plain) {
 userSchema.methods.comparePassword = async function comparePassword(plain) {
   if (!this.passwordHash) return false;
   return bcrypt.compare(plain, this.passwordHash);
+};
+
+// --- 2FA PIN helpers ---
+userSchema.methods.setMpin = async function setMpin(pin) {
+  this.mpinHash = await bcrypt.hash(pin, 12);
+};
+
+userSchema.methods.compareMpin = async function compareMpin(pin) {
+  if (!this.mpinHash) return false;
+  return bcrypt.compare(pin, this.mpinHash);
 };
 
 // Membership is active if paid and not expired.
@@ -169,6 +211,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     profession: this.profession,
     bio: this.bio,
     avatarUrl: this.avatarUrl,
+    coverUrl: this.coverUrl || '',
     instagram: this.instagram,
     facebook: this.facebook,
     twitter: this.twitter,
@@ -203,12 +246,17 @@ userSchema.methods.toPrivateJSON = function toPrivateJSON() {
     couponUsed: this.couponUsed || '',
     referralCode: this.referralCode || '',
     referralCount: this.referralCount || 0,
+    walletBalancePaise: this.walletBalancePaise || 0,
     relationshipStatus: this.relationshipStatus || '',
     partnerMobile: this.partnerMobile || '',
     partnerDocUrl: this.partnerDocUrl || '',
+    vehicleYear: this.vehicleYear || null,
+    mileageKmpl: this.mileageKmpl || null,
+    fuelType: this.fuelType || '',
     vehicles: this.vehicles || [],
     profileComplete: this.profileComplete,
     isActive: this.isActive,
+    twoFactorEnabled: this.twoFactorEnabled || false,
     updatedAt: this.updatedAt,
   };
 };

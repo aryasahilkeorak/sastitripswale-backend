@@ -7,6 +7,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import User from '../models/User.js';
 import Trip from '../models/Trip.js';
+import TripInterest from '../models/TripInterest.js';
+import MemberReview from '../models/MemberReview.js';
 import Connection from '../models/Connection.js';
 import Notification from '../models/Notification.js';
 import Document from '../models/Document.js';
@@ -14,6 +16,10 @@ import Gallery from '../models/Gallery.js';
 import Block from '../models/Block.js';
 import Report from '../models/Report.js';
 import PushSubscription from '../models/PushSubscription.js';
+import Group from '../models/Group.js';
+import Follow from '../models/Follow.js';
+import Influencer from '../models/Influencer.js';
+import Coupon from '../models/Coupon.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray, pick } from '../utils/parse.js';
 import { notify } from '../utils/notify.js';
@@ -42,13 +48,101 @@ async function connectionStatusMap(meId, otherIds) {
   return map;
 }
 
+// Build a map of userId -> [{ _id, name, photoUrl, category }] for every
+// travel club (Group type 'club') each of `userIds` belongs to - powers the
+// small club badge shown on a member's avatar in the directory and profile.
+async function clubBadgeMap(userIds) {
+  if (!userIds.length) return {};
+  const idSet = new Set(userIds.map(String));
+  const clubs = await Group.find({ type: 'club', members: { $in: userIds } }).select('name photoUrl category members');
+  const map = {};
+  for (const club of clubs) {
+    const badge = { _id: club._id, name: club.name, photoUrl: club.photoUrl || '', category: club.category };
+    for (const memberId of club.members) {
+      const key = String(memberId);
+      if (!idSet.has(key)) continue;
+      (map[key] ||= []).push(badge);
+    }
+  }
+  return map;
+}
+
+// Build a map of userId -> { followersCount, followingCount, isFollowedByMe }
+// for a page of users. Follow is one-directional and needs no approval -
+// deliberately separate from the mutual accept/reject Connection above.
+async function followCountsAndStatus(meId, userIds) {
+  if (!userIds.length) return {};
+  const [followerCounts, followingCounts, myFollows, followsMeRows] = await Promise.all([
+    Follow.aggregate([{ $match: { following: { $in: userIds } } }, { $group: { _id: '$following', count: { $sum: 1 } } }]),
+    Follow.aggregate([{ $match: { follower: { $in: userIds } } }, { $group: { _id: '$follower', count: { $sum: 1 } } }]),
+    meId ? Follow.find({ follower: meId, following: { $in: userIds } }).select('following') : [],
+    // Reverse direction - do these users already follow ME? Powers the
+    // Instagram "Follow Back" vs plain "Follow" button state.
+    meId ? Follow.find({ follower: { $in: userIds }, following: meId }).select('follower') : [],
+  ]);
+  const followerMap = Object.fromEntries(followerCounts.map((c) => [String(c._id), c.count]));
+  const followingMap = Object.fromEntries(followingCounts.map((c) => [String(c._id), c.count]));
+  const followedSet = new Set(myFollows.map((f) => String(f.following)));
+  const followsMeSet = new Set(followsMeRows.map((f) => String(f.follower)));
+
+  const map = {};
+  for (const id of userIds) {
+    const key = String(id);
+    map[key] = {
+      followersCount: followerMap[key] || 0,
+      followingCount: followingMap[key] || 0,
+      isFollowedByMe: followedSet.has(key),
+      followsMe: followsMeSet.has(key),
+    };
+  }
+  return map;
+}
+
+// "Followed by X, Y and N others" - people the viewer follows who ALSO
+// follow the profile being viewed (Instagram's mutual-followers line).
+// Only meaningful when logged in and looking at someone else's profile.
+async function mutualFollowers(meId, targetId) {
+  if (!meId || String(meId) === String(targetId)) return { list: [], total: 0 };
+  const myFollowing = await Follow.find({ follower: meId }).select('following');
+  const myFollowingIds = myFollowing.map((f) => f.following);
+  if (!myFollowingIds.length) return { list: [], total: 0 };
+  const total = await Follow.countDocuments({ following: targetId, follower: { $in: myFollowingIds } });
+  if (!total) return { list: [], total: 0 };
+  const rows = await Follow.find({ following: targetId, follower: { $in: myFollowingIds } })
+    .sort({ createdAt: -1 })
+    .limit(3)
+    .populate('follower', 'fullName avatarUrl username');
+  return { list: rows.map((r) => r.follower).filter(Boolean), total };
+}
+
+// Build a map of userId -> { couponCode, discountPct } for every APPROVED
+// influencer among `userIds` - public info only (never commissionPct or
+// earnings), so a member's profile can show "Use code X for Y% off".
+async function influencerBadgeMap(userIds) {
+  if (!userIds.length) return {};
+  const influencers = await Influencer.find({ status: 'approved', user: { $in: userIds } }).select('user');
+  if (!influencers.length) return {};
+  const coupons = await Coupon.find({ influencer: { $in: influencers.map((i) => i._id) }, isActive: true }).select('influencer code discountPct discountAmt');
+  const couponByInfluencerId = Object.fromEntries(coupons.map((c) => [String(c.influencer), c]));
+
+  const map = {};
+  for (const inf of influencers) {
+    const coupon = couponByInfluencerId[String(inf._id)];
+    if (coupon) {
+      map[String(inf.user)] = { couponCode: coupon.code, discountPct: coupon.discountPct, discountAmt: coupon.discountAmt };
+    }
+  }
+  return map;
+}
+
 export const getMembers = asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 12));
 
   // Superadmins are shown too (tagged "Founder" on the frontend) - plain
-  // admins stay out of the public directory.
-  const filter = { isActive: true, role: { $in: ['member', 'superadmin'] } };
+  // admins, and any superadmin flagged as a utility/support account, stay
+  // out of the public directory.
+  const filter = { isActive: true, role: { $in: ['member', 'superadmin'] }, isServiceAccount: { $ne: true } };
   if (req.query.vehicleType) filter.vehicleType = req.query.vehicleType;
   if (req.query.gender) filter.gender = req.query.gender;
   if (req.query.verified === 'true') filter.isVerified = true;
@@ -109,12 +203,21 @@ export const getMembers = asyncHandler(async (req, res) => {
   const usersById = new Map((await User.find({ _id: { $in: orderedIds } })).map((u) => [String(u._id), u]));
   const users = orderedIds.map((id) => usersById.get(String(id))).filter(Boolean);
 
-  const statusMap = await connectionStatusMap(req.user?._id, users.map((u) => u._id));
+  const userIds = users.map((u) => u._id);
+  const [statusMap, clubsMap, followMap, influencerMap] = await Promise.all([
+    connectionStatusMap(req.user?._id, userIds),
+    clubBadgeMap(userIds),
+    followCountsAndStatus(req.user?._id, userIds),
+    influencerBadgeMap(userIds),
+  ]);
 
   const members = users.map((u) => ({
     ...u.toPublicJSON(),
     connection: statusMap[String(u._id)] || null,
     isSelf: req.user ? String(u._id) === String(req.user._id) : false,
+    clubs: clubsMap[String(u._id)] || [],
+    ...(followMap[String(u._id)] || { followersCount: 0, followingCount: 0, isFollowedByMe: false }),
+    influencer: influencerMap[String(u._id)] || null,
   }));
 
   res.json({
@@ -128,7 +231,7 @@ export const getMember = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
   if (!user || !user.isActive) throw ApiError.notFound('Member not found');
 
-  const [tripsOrganized, connectionCount, recentTrips, recentPhotos, photoCount, similar] = await Promise.all([
+  const [tripsOrganized, connectionCount, recentTrips, joinedInterests, recentPhotos, photoCount, similar, ratingAgg, memberReviews] = await Promise.all([
     Trip.countDocuments({ organizer: user._id }),
     Connection.countDocuments({
       $or: [{ sender: user._id }, { receiver: user._id }],
@@ -137,7 +240,17 @@ export const getMember = asyncHandler(async (req, res) => {
     Trip.find({ organizer: user._id })
       .sort({ createdAt: -1 })
       .limit(12)
-      .select('origin viaStops destination coverImageUrl startDate endDate budgetPerHead status'),
+      .select('origin viaStops destination coverImageUrl startDate endDate budgetPerHead filledSeats vehicleType status'),
+    // Trips this member joined as a co-traveler (accepted, not organizer) -
+    // powers the "Trips joined" section alongside "Trips hosted" above.
+    TripInterest.find({ user: user._id, status: 'accepted' })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .populate({
+        path: 'trip',
+        select: 'origin viaStops destination coverImageUrl startDate endDate budgetPerHead filledSeats vehicleType status organizer',
+        populate: { path: 'organizer', select: 'fullName username vehicleModel avatarUrl isVerified' },
+      }),
     Gallery.find({ user: user._id }).sort({ createdAt: -1 }).limit(12).select('photoUrl caption category'),
     Gallery.countDocuments({ user: user._id }),
     // Other travelers who share at least one travel interest - used to
@@ -147,12 +260,26 @@ export const getMember = asyncHandler(async (req, res) => {
           _id: { $ne: user._id },
           isActive: true,
           role: { $in: ['member', 'superadmin'] },
+          isServiceAccount: { $ne: true },
           travelInterests: { $in: user.travelInterests },
         })
           .select('fullName avatarUrl city travelInterests isVerified')
           .limit(24)
       : [],
+    // Aggregate "how was it travelling with this person" rating, from
+    // co-travelers who rated them on completed trips.
+    MemberReview.aggregate([
+      { $match: { ratee: user._id } },
+      { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } },
+    ]),
+    MemberReview.find({ ratee: user._id })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .populate('rater', 'fullName avatarUrl')
+      .populate('trip', 'destination'),
   ]);
+
+  const joinedTrips = joinedInterests.map((i) => i.trip).filter(Boolean);
 
   const suggested = similar
     .map((u) => ({
@@ -170,18 +297,42 @@ export const getMember = asyncHandler(async (req, res) => {
   const isBlockedByMe = req.user
     ? Boolean(await Block.exists({ blocker: req.user._id, blocked: user._id }))
     : false;
+  const clubsMap = await clubBadgeMap([user._id]);
+  const followMap = await followCountsAndStatus(req.user?._id, [user._id]);
+  const influencerMap = await influencerBadgeMap([user._id]);
+  const mutual = await mutualFollowers(req.user?._id, user._id);
 
   res.json({
     success: true,
     member: {
       ...user.toPublicJSON(),
-      stats: { tripsOrganized, connections: connectionCount, photos: photoCount },
+      clubs: clubsMap[String(user._id)] || [],
+      ...(followMap[String(user._id)] || { followersCount: 0, followingCount: 0, isFollowedByMe: false }),
+      influencer: influencerMap[String(user._id)] || null,
+      mutualFollowers: mutual.list.map((f) => ({ id: f._id, fullName: f.fullName, avatarUrl: f.avatarUrl, username: f.username })),
+      mutualFollowersTotal: mutual.total,
+      stats: {
+        tripsOrganized,
+        connections: connectionCount,
+        photos: photoCount,
+        rating: ratingAgg[0]?.avg || 0,
+        ratingCount: ratingAgg[0]?.count || 0,
+      },
       recentTrips,
+      joinedTrips,
       recentPhotos,
+      memberReviews,
       suggested,
       connection: statusMap[String(user._id)] || null,
       isSelf: req.user ? String(user._id) === String(req.user._id) : false,
       isBlockedByMe,
+      ...(req.user && String(user._id) === String(req.user._id)
+        ? {
+            referralCode: user.referralCode || '',
+            referralCount: user.referralCount || 0,
+            walletBalancePaise: user.walletBalancePaise || 0,
+          }
+        : {}),
     },
   });
 });
@@ -257,6 +408,7 @@ const PROFILE_FIELDS = [
   'linkedin',
   'vehicleType',
   'vehicleModel',
+  'fuelType',
   'drinks',
   'smokes',
 ];
@@ -319,6 +471,8 @@ export const updateProfile = asyncHandler(async (req, res) => {
 
   Object.assign(user, pick(req.body, PROFILE_FIELDS));
   if (req.body.age !== undefined && req.body.age !== '') user.age = Number(req.body.age);
+  if (req.body.vehicleYear !== undefined) user.vehicleYear = req.body.vehicleYear === '' ? undefined : Number(req.body.vehicleYear);
+  if (req.body.mileageKmpl !== undefined) user.mileageKmpl = req.body.mileageKmpl === '' ? undefined : Number(req.body.mileageKmpl);
   if (req.body.hasVehicle !== undefined) user.hasVehicle = toBool(req.body.hasVehicle);
   if (req.body.travelInterests !== undefined) user.travelInterests = parseArray(req.body.travelInterests);
   if (req.body.emergencyContact !== undefined) user.emergencyContact = req.body.emergencyContact;
@@ -338,6 +492,7 @@ export const updateProfile = asyncHandler(async (req, res) => {
 
   const files = req.files || {};
   if (files.avatar?.[0]) user.avatarUrl = await saveUpload(files.avatar[0], { owner: user._id, kind: 'avatar' });
+  if (files.cover?.[0]) user.coverUrl = await saveUpload(files.cover[0], { owner: user._id, kind: 'cover' });
   if (files.partnerDoc?.[0]) user.partnerDocUrl = await saveUpload(files.partnerDoc[0], { owner: user._id, kind: 'document' });
 
   await user.save();
@@ -381,6 +536,7 @@ export const completeProfile = asyncHandler(async (req, res) => {
 
   const files = req.files || {};
   if (files.avatar?.[0]) user.avatarUrl = await saveUpload(files.avatar[0], { owner: user._id, kind: 'avatar' });
+  if (files.cover?.[0]) user.coverUrl = await saveUpload(files.cover[0], { owner: user._id, kind: 'cover' });
   if (files.partnerDoc?.[0]) user.partnerDocUrl = await saveUpload(files.partnerDoc[0], { owner: user._id, kind: 'document' });
 
   const docSpecs = [
@@ -643,6 +799,96 @@ export const getConnections = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 });
 
   res.json({ success: true, connections: conns });
+});
+
+const FOLLOW_LIST_FIELDS = 'fullName username avatarUrl city isVerified role';
+
+// POST /members/:id/follow - one-directional, instant, no approval needed.
+export const followMember = asyncHandler(async (req, res) => {
+  const targetId = req.params.id;
+  if (String(targetId) === String(req.user._id)) throw ApiError.badRequest("You can't follow yourself");
+  const target = await User.findById(targetId);
+  if (!target || !target.isActive) throw ApiError.notFound('Member not found');
+
+  const blocked = await Block.exists({
+    $or: [
+      { blocker: req.user._id, blocked: targetId },
+      { blocker: targetId, blocked: req.user._id },
+    ],
+  });
+  if (blocked) throw ApiError.forbidden('You cannot follow this member');
+
+  const existing = await Follow.findOne({ follower: req.user._id, following: targetId });
+  if (!existing) {
+    await Follow.create({ follower: req.user._id, following: targetId });
+    notify(targetId, {
+      type: 'follow',
+      title: 'New follower',
+      message: `${req.user.fullName} started following you`,
+      meta: { userId: String(req.user._id) },
+    });
+  }
+  res.json({ success: true, isFollowedByMe: true });
+});
+
+// DELETE /members/:id/follow
+export const unfollowMember = asyncHandler(async (req, res) => {
+  await Follow.deleteOne({ follower: req.user._id, following: req.params.id });
+  res.json({ success: true, isFollowedByMe: false });
+});
+
+// DELETE /members/followers/:followerId - remove someone from MY OWN
+// followers list (the reverse of unfollow - only the followed party can do
+// this, since it's their own follower list being pruned).
+export const removeFollower = asyncHandler(async (req, res) => {
+  await Follow.deleteOne({ follower: req.params.followerId, following: req.user._id });
+  res.json({ success: true });
+});
+
+// GET /members/:id/followers - who follows this member.
+export const getFollowers = asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 24));
+
+  const [rows, total] = await Promise.all([
+    Follow.find({ following: req.params.id })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('follower', FOLLOW_LIST_FIELDS),
+    Follow.countDocuments({ following: req.params.id }),
+  ]);
+  const users = rows.map((r) => r.follower).filter(Boolean);
+  const followMap = await followCountsAndStatus(req.user?._id, users.map((u) => u._id));
+
+  res.json({
+    success: true,
+    members: users.map((u) => ({ ...u.toPublicJSON(), ...(followMap[String(u._id)] || {}) })),
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+  });
+});
+
+// GET /members/:id/following - who this member follows.
+export const getFollowing = asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 24));
+
+  const [rows, total] = await Promise.all([
+    Follow.find({ follower: req.params.id })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('following', FOLLOW_LIST_FIELDS),
+    Follow.countDocuments({ follower: req.params.id }),
+  ]);
+  const users = rows.map((r) => r.following).filter(Boolean);
+  const followMap = await followCountsAndStatus(req.user?._id, users.map((u) => u._id));
+
+  res.json({
+    success: true,
+    members: users.map((u) => ({ ...u.toPublicJSON(), ...(followMap[String(u._id)] || {}) })),
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+  });
 });
 
 export const getNotifications = asyncHandler(async (req, res) => {

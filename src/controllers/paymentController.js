@@ -8,6 +8,9 @@ import ApiError from '../utils/ApiError.js';
 import Payment from '../models/Payment.js';
 import Coupon from '../models/Coupon.js';
 import User from '../models/User.js';
+import Influencer from '../models/Influencer.js';
+import Commission from '../models/Commission.js';
+import Setting from '../models/Setting.js';
 import { env } from '../config/env.js';
 import {
   createOrder,
@@ -51,8 +54,63 @@ async function activateMembership(user, payment) {
   await user.save();
 
   if (payment?.couponUsed) {
-    await Coupon.updateOne({ code: payment.couponUsed }, { $inc: { usedCount: 1 } });
+    const coupon = await Coupon.findOneAndUpdate(
+      { code: payment.couponUsed },
+      { $inc: { usedCount: 1 } },
+      { new: false }
+    );
+    // Influencer coupon + a real (non-zero) payment amount → accrue a
+    // commission ledger row. Free (100%-off) coupons still count toward
+    // usedCount above but never generate a commission - there's no payment
+    // amount to take a cut of.
+    if (coupon?.influencer && payment.amount > 0) {
+      const influencer = await Influencer.findOne({ _id: coupon.influencer, status: 'approved' });
+      if (influencer && influencer.commissionPct > 0) {
+        const amountPaise = Math.round(payment.amount * (influencer.commissionPct / 100));
+        if (amountPaise > 0) {
+          await Commission.create({
+            influencer: influencer._id,
+            payment: payment._id,
+            user: user._id,
+            amountPaise,
+          });
+          influencer.totalEarnedPaise += amountPaise;
+          await influencer.save();
+          await User.updateOne({ _id: influencer.user }, { $inc: { walletBalancePaise: amountPaise } });
+        }
+      }
+    }
   }
+
+  // Referral reward - credited to the referrer's wallet the first time this
+  // referred member actually pays (never at bare signup, and never twice).
+  // The amount depends on which tier the referrer's Nth converted referral
+  // (their own referralRewardsGiven + 1) falls into - see Setting.referralTiers.
+  if (user.referredBy && !user.referralRewardCredited && payment?.amount > 0) {
+    const settings = await Setting.getSingleton();
+    if (settings.referralEnabled) {
+      const referrer = await User.findById(user.referredBy).select('referralRewardsGiven');
+      if (referrer) {
+        const position = referrer.referralRewardsGiven + 1;
+        const tier = settings.referralTiers.find((t) => position >= t.from && (t.to == null || position <= t.to));
+        const amountPaise = tier?.amountPaise || 0;
+        if (amountPaise > 0) {
+          await User.updateOne(
+            { _id: user.referredBy },
+            { $inc: { walletBalancePaise: amountPaise, referralRewardsGiven: 1 } }
+          );
+          user.referralRewardCredited = true;
+          await user.save();
+          notify(user.referredBy, {
+            type: 'system',
+            title: 'Referral reward credited',
+            message: `You earned ₹${(amountPaise / 100).toFixed(0)} in your wallet - someone you referred just activated their membership.`,
+          });
+        }
+      }
+    }
+  }
+
   notify(user._id, {
     type: 'payment',
     title: 'Membership active',
