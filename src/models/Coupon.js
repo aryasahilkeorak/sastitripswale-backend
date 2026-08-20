@@ -11,6 +11,10 @@ const couponSchema = new Schema(
     usedCount: { type: Number, default: 0, min: 0 },
     isActive: { type: Boolean, default: true },
     expiresAt: { type: Date },
+    // Set only for an approved influencer's personal coupon - unset for
+    // plain admin-created coupons. Drives commission accrual in
+    // paymentController.js's activateMembership().
+    influencer: { type: Schema.Types.ObjectId, ref: 'Influencer' },
   },
   { timestamps: true }
 );

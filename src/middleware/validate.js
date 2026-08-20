@@ -3,6 +3,7 @@
 // ============================================================
 import { validationResult, body, query } from 'express-validator';
 import ApiError from '../utils/ApiError.js';
+import { GROUP_VEHICLE_CAPACITY } from '../models/GroupTrip.js';
 
 // Run after a chain of validators; throws 400 with the first message.
 export function validate(req, res, next) {
@@ -52,6 +53,16 @@ export const resetRules = [
   body('password').isLength({ min: 6, max: 128 }).withMessage('Password must be at least 6 characters'),
 ];
 
+export const verifyTwoFactorRules = [
+  body('twoFactorToken').notEmpty().withMessage('2FA session token required'),
+  body('pin').trim().matches(/^[0-9]{6}$/).withMessage('Enter the 6-digit PIN'),
+];
+
+export const setupTwoFactorRules = [
+  body('password').notEmpty().withMessage('Current password required'),
+  body('pin').trim().matches(/^[0-9]{6}$/).withMessage('PIN must be exactly 6 digits'),
+];
+
 export const tripRules = [
   body('origin').trim().isLength({ min: 2, max: 200 }).withMessage('Starting point required'),
   body('destination').trim().isLength({ min: 2, max: 200 }).withMessage('Destination required'),
@@ -68,6 +79,12 @@ export const tripRules = [
       if (seats < 4 || seats % 2 !== 0) throw new Error('Couples mode needs an even number of seats (4 or more)');
       if (req.body.vehicleType !== 'Car') throw new Error('Couples mode requires vehicle type "Car" (4-seater or bigger)');
     }
+    // A bike only fits the rider plus one pillion - totalSeats counts
+    // co-traveler slots only (the organizer doesn't occupy one outside
+    // Couples Mode), so a bike trip can only ever have 1 seat to offer.
+    if (req.body.vehicleType === 'Bike' && Number(value) > 1) {
+      throw new Error('A bike trip can only have 1 seat for a co-traveler');
+    }
     return true;
   }),
 ];
@@ -75,6 +92,29 @@ export const tripRules = [
 export const reviewRules = [
   body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be 1-5'),
   body('message').trim().isLength({ min: 3, max: 2000 }).withMessage('Review message required'),
+];
+
+export const groupTripRules = [
+  body('vehicleType').isIn(Object.keys(GROUP_VEHICLE_CAPACITY)).withMessage('Vehicle type must be Bike or Car'),
+  body('origin').trim().isLength({ min: 2, max: 200 }).withMessage('Starting point required'),
+  body('destination').trim().isLength({ min: 2, max: 200 }).withMessage('Destination required'),
+  body('viaStops').optional().isArray({ max: 6 }).withMessage('Up to 6 stops allowed'),
+  body('viaStops.*').trim().isLength({ min: 1, max: 100 }).withMessage('Each stop must be 1-100 characters'),
+  body('startDate').isISO8601().withMessage('Valid start date required'),
+  body('endDate').isISO8601().withMessage('Valid end date required'),
+  body('budgetPerHead').isFloat({ min: 0 }).withMessage('Budget must be a positive number'),
+];
+
+export const clubRules = [
+  body('name').trim().isLength({ min: 2, max: 80 }).withMessage('Club name must be 2-80 characters'),
+  body('description').optional({ values: 'falsy' }).trim().isLength({ max: 500 }).withMessage('Description must be under 500 characters'),
+  body('category').isIn(['bikers', 'cars', 'offroading', 'other']).withMessage('Choose a valid club category'),
+];
+
+export const memberReviewRules = [
+  body('rateeId').isMongoId().withMessage('rateeId is required'),
+  body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be 1-5'),
+  body('message').optional({ values: 'falsy' }).trim().isLength({ max: 500 }).withMessage('Message must be under 500 characters'),
 ];
 
 export const contactRules = [

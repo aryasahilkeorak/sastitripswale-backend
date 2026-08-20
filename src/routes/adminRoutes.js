@@ -43,6 +43,19 @@ router.put('/coupons/:id', perm('coupons'), admin.updateCoupon);
 router.patch('/coupons/:id', perm('coupons'), admin.toggleCoupon);
 router.delete('/coupons/:id', perm('coupons'), admin.deleteCoupon);
 
+// Influencers / Promoters
+router.get('/influencers', perm('influencers'), admin.getInfluencers);
+router.patch('/influencers/:id', perm('influencers'), admin.respondToInfluencer);
+router.put('/influencers/:id', perm('influencers'), admin.updateInfluencer);
+router.delete('/influencers/:id', perm('influencers'), admin.deleteInfluencer);
+router.get('/commissions', perm('influencers'), admin.getCommissions);
+router.patch('/commissions/:id', perm('influencers'), admin.markCommissionPaid);
+
+// Wallet withdrawals
+router.get('/withdrawals', perm('wallet'), admin.getWithdrawals);
+router.patch('/withdrawals/:id', perm('wallet'), admin.respondToWithdrawal);
+router.get('/wallet-stats', perm('wallet'), admin.getWalletStats);
+
 // Gallery
 router.get('/gallery', perm('gallery'), admin.getAdminGallery);
 router.post('/gallery/bulk-delete', perm('gallery'), admin.bulkDeleteGalleryPhotos);
@@ -61,5 +74,6 @@ router.delete('/reports/:id', perm('messages'), admin.deleteReport);
 // Site-wide settings (super-admin only)
 router.get('/settings', superOnly, admin.getSettings);
 router.patch('/settings/referrals', superOnly, admin.toggleReferrals);
+router.patch('/settings/referral-tiers', superOnly, admin.updateReferralTiers);
 
 export default router;

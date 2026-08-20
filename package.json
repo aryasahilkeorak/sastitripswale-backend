@@ -11,6 +11,7 @@
     "seed": "node src/utils/seed.js",
     "seed:destroy": "node src/utils/seed.js --destroy",
     "seed:demo": "node src/utils/seedDemoAdd.js",
+    "seed:completed": "node src/utils/seedCompletedTrips.js",
     "backfill:referrals": "node src/utils/backfillReferralCodes.js",
     "backfill:cotraveler": "node src/utils/fixCoTravelerPreference.js",
     "backfill:verification": "node src/utils/backfillVerificationLevel.js"
@@ -19,6 +20,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",

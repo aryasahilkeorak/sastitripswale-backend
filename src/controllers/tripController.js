@@ -7,15 +7,16 @@ import Trip from '../models/Trip.js';
 import TripInterest from '../models/TripInterest.js';
 import Gallery from '../models/Gallery.js';
 import Review from '../models/Review.js';
+import MemberReview from '../models/MemberReview.js';
 import User from '../models/User.js';
 import Group from '../models/Group.js';
-import Message from '../models/Message.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { notify } from '../utils/notify.js';
 import { sendJoinRequestEmail, sendJoinAcceptedEmail, sendJoinRejectedEmail } from '../utils/email.js';
 import { fetchDestinationPhoto } from '../utils/pexels.js';
 import { estimateTripCost } from '../utils/tripCost.js';
 import { pick } from '../utils/parse.js';
+import { sweepExpiredTrips, deleteTripCascade } from '../utils/tripLifecycle.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 // The "Leaving from"/"Going to" fields are filled by PlaceAutocomplete's
@@ -51,6 +52,7 @@ async function attachCounts(trips, userId) {
 }
 
 export const getTrips = asyncHandler(async (req, res) => {
+  await sweepExpiredTrips();
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 12));
   const { status, type, minBudget, maxBudget, search, sort, from, to, date, seats } = req.query;
@@ -119,17 +121,31 @@ export const getTrips = asyncHandler(async (req, res) => {
 });
 
 export const getMyTrips = asyncHandler(async (req, res) => {
+  await sweepExpiredTrips();
   const trips = await Trip.find({ organizer: req.user._id })
     .populate('organizer', 'fullName username city avatarUrl isVerified vehicleModel')
     .sort({ createdAt: -1 });
   const data = await attachCounts(trips, req.user._id);
-  res.json({ success: true, trips: data });
+
+  // Trips this member joined as a co-traveler (accepted, not organizer) -
+  // powers the "Trips joined" section alongside "My Trips" (hosted) above.
+  const joinedInterests = await TripInterest.find({ user: req.user._id, status: 'accepted' })
+    .sort({ createdAt: -1 })
+    .populate({
+      path: 'trip',
+      populate: { path: 'organizer', select: 'fullName username city avatarUrl isVerified vehicleModel' },
+    });
+  const joinedTripDocs = joinedInterests.map((i) => i.trip).filter(Boolean);
+  const joinedTrips = await attachCounts(joinedTripDocs, req.user._id);
+
+  res.json({ success: true, trips: data, joinedTrips });
 });
 
 const MEMBER_FIELDS = 'fullName username city avatarUrl isVerified vehicleModel';
 const MEMBER_FIELDS_WITH_PARTNER = `${MEMBER_FIELDS} partnerMobile partnerDocUrl`;
 
 export const getTrip = asyncHandler(async (req, res) => {
+  await sweepExpiredTrips();
   const trip = await Trip.findById(req.params.id).populate(
     'organizer',
     'fullName username city avatarUrl isVerified profession vehicleType vehicleModel partnerMobile partnerDocUrl'
@@ -169,6 +185,13 @@ export const getTrip = asyncHandler(async (req, res) => {
   const canReview = trip.status === 'completed' && (isOrganizer || requestStatus === 'accepted');
   const myReview = req.user ? reviews.find((r) => String(r.user?._id) === String(req.user._id)) || null : null;
 
+  // Same eligibility as canReview, but for rating individual co-travelers
+  // rather than the trip overall.
+  const canRateMembers = canReview;
+  const myMemberReviews = req.user
+    ? await MemberReview.find({ trip: trip._id, rater: req.user._id }).select('ratee rating message')
+    : [];
+
   const withCoupleFlag = (i) => ({ ...i.user.toObject(), isCouple: i.isCouple });
 
   let pendingRequests;
@@ -197,6 +220,8 @@ export const getTrip = asyncHandler(async (req, res) => {
       reviews,
       canReview,
       myReview,
+      canRateMembers,
+      myMemberReviews,
     },
   });
 });
@@ -206,7 +231,7 @@ export const getTrip = asyncHandler(async (req, res) => {
 // keyless routing over OpenStreetMap data); fuel/toll are approximated from
 // the vehicle's mileage and India-wide average rates (see utils/tripCost.js).
 export const estimateCost = asyncHandler(async (req, res) => {
-  const { origin, viaStops, destination, mileageKmpl, fuelType } = req.body;
+  const { origin, viaStops, destination, mileageKmpl, fuelType, vehicleType } = req.body;
   if (!origin || !destination) throw ApiError.badRequest('Origin and destination are required');
   const mileage = Number(mileageKmpl);
   if (!mileage || mileage <= 0) throw ApiError.badRequest("Enter your vehicle's mileage (km/l)");
@@ -217,6 +242,7 @@ export const estimateCost = asyncHandler(async (req, res) => {
     destination,
     mileageKmpl: mileage,
     fuelType,
+    vehicleType,
   });
   if (!estimate) {
     throw ApiError.badRequest("Couldn't find a driving route between those places - check the spelling and try again");
@@ -276,6 +302,25 @@ export const updateTrip = asyncHandler(async (req, res) => {
   if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Not allowed');
 
   const payload = pick(req.body, [...CREATE_FIELDS, 'status', 'filledSeats']);
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+
+  // A completed trip's details are history - not editable by its organizer
+  // (though they can still revert its status alone, e.g. if it was marked
+  // completed by mistake, which is why this checks "any other field", not
+  // "any change at all"). Admins keep full edit access for moderation.
+  const changingMoreThanStatus = Object.keys(payload).some((k) => k !== 'status');
+  if (trip.status === 'completed' && changingMoreThanStatus && !isAdmin) {
+    throw ApiError.badRequest('A completed trip cannot be edited - change its status first if this was a mistake');
+  }
+
+  // Same bike-seat cap as trip creation (tripRules) - a bike only fits the
+  // rider plus one pillion.
+  const resultingVehicleType = payload.vehicleType ?? trip.vehicleType;
+  const resultingTotalSeats = payload.totalSeats ?? trip.totalSeats;
+  if (resultingVehicleType === 'Bike' && Number(resultingTotalSeats) > 1) {
+    throw ApiError.badRequest('A bike trip can only have 1 seat for a co-traveler');
+  }
+
   const destinationChanged = payload.destination && payload.destination !== trip.destination;
   const turningCouplesModeOn = payload.isCouplesMode && !trip.isCouplesMode;
   if (turningCouplesModeOn) {
@@ -292,16 +337,13 @@ export const deleteTrip = asyncHandler(async (req, res) => {
   const trip = await Trip.findById(req.params.id);
   if (!trip) throw ApiError.notFound('Trip not found');
   const isOwner = String(trip.organizer) === String(req.user._id);
-  if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Not allowed');
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+  if (!isOwner && !isAdmin) throw ApiError.forbidden('Not allowed');
+  if (trip.status === 'completed' && !isAdmin) {
+    throw ApiError.badRequest('A completed trip cannot be deleted - it may have photos, reviews, and ratings attached');
+  }
 
-  const grp = await Group.findOne({ trip: trip._id });
-  await Promise.all([
-    TripInterest.deleteMany({ trip: trip._id }),
-    Gallery.deleteMany({ trip: trip._id }),
-    grp ? Message.deleteMany({ group: grp._id }) : Promise.resolve(),
-  ]);
-  if (grp) await grp.deleteOne();
-  await trip.deleteOne();
+  await deleteTripCascade(trip);
   res.json({ success: true, message: 'Trip deleted' });
 });
 
@@ -391,6 +433,11 @@ export const respondToRequest = asyncHandler(async (req, res) => {
   if (action === 'accept') {
     const seats = interest.isCouple ? 2 : 1;
     if (trip.seatsLeft < seats) throw ApiError.badRequest('Not enough seats left to accept this request');
+    // Belt-and-suspenders on top of the totalSeats cap enforced at
+    // creation/edit time - a bike only fits the rider plus one pillion.
+    if (trip.vehicleType === 'Bike' && (trip.filledSeats || 0) >= 1) {
+      throw ApiError.badRequest('A bike trip can only have one co-traveler');
+    }
     interest.status = 'accepted';
     await interest.save();
     trip.filledSeats = (trip.filledSeats || 0) + seats;
@@ -477,6 +524,36 @@ export const createTripReview = asyncHandler(async (req, res) => {
     },
     { new: true, upsert: true, setDefaultsOnInsert: true }
   ).populate('user', 'fullName city avatarUrl isVerified');
+
+  res.status(201).json({ success: true, review });
+});
+
+// Rate a specific co-traveler from a completed trip - "how was it
+// travelling with this person" - distinct from createTripReview above,
+// which rates the trip as a whole.
+export const rateMember = asyncHandler(async (req, res) => {
+  const trip = await Trip.findById(req.params.id);
+  if (!trip) throw ApiError.notFound('Trip not found');
+  if (trip.status !== 'completed') {
+    throw ApiError.badRequest('You can only rate co-travelers after the trip has been completed');
+  }
+
+  const raterId = req.user._id;
+  const rateeId = req.body.rateeId;
+  if (String(rateeId) === String(raterId)) throw ApiError.badRequest("You can't rate yourself");
+
+  const isOnTrip = async (userId) =>
+    String(trip.organizer) === String(userId) ||
+    (await TripInterest.exists({ trip: trip._id, user: userId, status: 'accepted' }));
+
+  if (!(await isOnTrip(raterId))) throw ApiError.forbidden('Only trip members can rate co-travelers');
+  if (!(await isOnTrip(rateeId))) throw ApiError.badRequest('That person was not on this trip');
+
+  const review = await MemberReview.findOneAndUpdate(
+    { trip: trip._id, rater: raterId, ratee: rateeId },
+    { trip: trip._id, rater: raterId, ratee: rateeId, rating: Number(req.body.rating), message: req.body.message || '' },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
 
   res.status(201).json({ success: true, review });
 });

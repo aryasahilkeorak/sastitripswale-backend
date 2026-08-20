@@ -7,7 +7,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import User from '../models/User.js';
 import Setting from '../models/Setting.js';
-import { issueTokenPair, verifyRefreshToken, sha256 } from '../utils/jwt.js';
+import Follow from '../models/Follow.js';
+import { issueTokenPair, verifyRefreshToken, sha256, signTwoFactorToken, verifyTwoFactorToken } from '../utils/jwt.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray } from '../utils/parse.js';
 import { notify } from '../utils/notify.js';
@@ -67,6 +68,16 @@ export const register = asyncHandler(async (req, res) => {
   user.refreshTokenHash = pair.refreshTokenHash;
   await user.save();
 
+  // New members auto-follow the platform founder(s) so they see founder
+  // updates by default - one-directional, doesn't need the founder's approval.
+  const founders = await User.find({ role: 'superadmin' }).select('_id');
+  if (founders.length) {
+    await Follow.insertMany(
+      founders.map((f) => ({ follower: user._id, following: f._id })),
+      { ordered: false }
+    ).catch(() => {});
+  }
+
   notify(user._id, {
     type: 'welcome',
     title: 'Welcome to SastiTripWale!',
@@ -92,6 +103,16 @@ export const login = asyncHandler(async (req, res) => {
   if (!ok) throw ApiError.unauthorized('Invalid email or password');
   if (!user.isActive) throw ApiError.forbidden('Your account has been suspended');
 
+  // Admin/superadmin with 2FA (PIN) enabled - password alone isn't enough.
+  // Hold off on issuing real tokens until /auth/verify-2fa confirms the PIN.
+  if (user.twoFactorEnabled && user.role !== 'member') {
+    return res.json({
+      success: true,
+      twoFactorRequired: true,
+      twoFactorToken: signTwoFactorToken(user),
+    });
+  }
+
   const pair = issueTokenPair(user);
   user.refreshTokenHash = pair.refreshTokenHash;
   await user.save();
@@ -102,6 +123,69 @@ export const login = asyncHandler(async (req, res) => {
     accessToken: pair.accessToken,
     refreshToken: pair.refreshToken,
   });
+});
+
+// POST /auth/verify-2fa - exchanges a password-verified pending token + the
+// admin's 6-digit PIN for a real token pair.
+export const verifyTwoFactor = asyncHandler(async (req, res) => {
+  const { twoFactorToken, pin } = req.body;
+  if (!twoFactorToken || !pin) throw ApiError.badRequest('PIN required');
+
+  let payload;
+  try {
+    payload = verifyTwoFactorToken(twoFactorToken);
+  } catch {
+    throw ApiError.unauthorized('2FA session expired, please log in again');
+  }
+
+  const user = await User.findById(payload.sub).select('+mpinHash +refreshTokenHash');
+  if (!user || !user.isActive || !user.twoFactorEnabled) {
+    throw ApiError.unauthorized('2FA session expired, please log in again');
+  }
+
+  const ok = await user.compareMpin(String(pin));
+  if (!ok) throw ApiError.unauthorized('Incorrect PIN');
+
+  const pair = issueTokenPair(user);
+  user.refreshTokenHash = pair.refreshTokenHash;
+  await user.save();
+
+  res.json({
+    success: true,
+    user: user.toPrivateJSON(),
+    accessToken: pair.accessToken,
+    refreshToken: pair.refreshToken,
+  });
+});
+
+// POST /auth/2fa/setup - enable 2FA / (re)set the PIN for the logged-in
+// admin. Re-confirms the current password so a hijacked-but-unlocked
+// session can't silently take over the PIN.
+export const setupTwoFactor = asyncHandler(async (req, res) => {
+  const { password, pin } = req.body;
+  if (!/^[0-9]{6}$/.test(String(pin || ''))) throw ApiError.badRequest('PIN must be exactly 6 digits');
+
+  const user = await User.findById(req.user._id).select('+passwordHash');
+  const ok = await user.comparePassword(password);
+  if (!ok) throw ApiError.unauthorized('Current password is incorrect');
+
+  await user.setMpin(String(pin));
+  user.twoFactorEnabled = true;
+  await user.save();
+  res.json({ success: true, message: 'Two-factor authentication enabled', user: user.toPrivateJSON() });
+});
+
+// POST /auth/2fa/disable
+export const disableTwoFactor = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  const user = await User.findById(req.user._id).select('+passwordHash');
+  const ok = await user.comparePassword(password);
+  if (!ok) throw ApiError.unauthorized('Current password is incorrect');
+
+  user.twoFactorEnabled = false;
+  user.mpinHash = undefined;
+  await user.save();
+  res.json({ success: true, message: 'Two-factor authentication disabled', user: user.toPrivateJSON() });
 });
 
 export const refresh = asyncHandler(async (req, res) => {
