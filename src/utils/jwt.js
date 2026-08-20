@@ -31,6 +31,23 @@ export function verifyRefreshToken(token) {
   return jwt.verify(token, env.jwt.refreshSecret);
 }
 
+// Short-lived token proving "password already verified" for an admin
+// account with 2FA enabled - issued instead of real tokens by /auth/login,
+// exchanged for real tokens by /auth/verify-2fa once the PIN checks out.
+export function signTwoFactorToken(user) {
+  return jwt.sign(
+    { sub: String(user._id), type: '2fa_pending' },
+    env.jwt.accessSecret,
+    { expiresIn: '5m' }
+  );
+}
+
+export function verifyTwoFactorToken(token) {
+  const payload = jwt.verify(token, env.jwt.accessSecret);
+  if (payload.type !== '2fa_pending') throw new Error('Not a 2FA token');
+  return payload;
+}
+
 // Hash a refresh/reset token for at-rest storage.
 export function sha256(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');

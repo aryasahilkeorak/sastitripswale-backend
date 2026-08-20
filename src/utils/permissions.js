@@ -11,6 +11,8 @@ export const ADMIN_PERMISSIONS = [
   'messages', // manage contact/help queries
   'gallery', // delete gallery photos
   'revenue', // see revenue figures on the dashboard
+  'influencers', // approve/reject influencer applications, manage coupons + commissions
+  'wallet', // review/approve/pay wallet withdrawal requests
 ];
 
 export function sanitizePermissions(list) {

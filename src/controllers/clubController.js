@@ -12,7 +12,7 @@ import { notify } from '../utils/notify.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { findUserByIdentifier } from '../utils/findUserByIdentifier.js';
 
-const MEMBER_FIELDS = 'fullName avatarUrl city isVerified role vehicleType';
+const MEMBER_FIELDS = 'fullName username avatarUrl city isVerified role vehicleType';
 const OWNER_FIELDS = 'fullName avatarUrl isVerified';
 // Non-members get a small teaser of the roster (public directory info only,
 // same fields already visible on the Members page) - the full list is a

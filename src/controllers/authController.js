@@ -15,17 +15,27 @@ import { notify } from '../utils/notify.js';
 import { sendWelcomeEmail, sendPasswordResetEmail } from '../utils/email.js';
 import { env } from '../config/env.js';
 import { assignReferralCode } from '../utils/referral.js';
+import { USERNAME_RX } from '../utils/username.js';
 
 export const register = asyncHandler(async (req, res) => {
   const b = req.body;
   const email = String(b.email).toLowerCase().trim();
+  const username = String(b.username || '').toLowerCase().trim();
+  if (!USERNAME_RX.test(username)) {
+    throw ApiError.badRequest('Username must be 3-30 characters: lowercase letters, numbers, "_" or "." only');
+  }
 
-  const existing = await User.findOne({ $or: [{ email }, { mobile: b.mobile }] });
-  if (existing) throw ApiError.conflict('An account with that email or mobile already exists');
+  const existing = await User.findOne({ $or: [{ email }, { mobile: b.mobile }, { username }] });
+  if (existing) {
+    throw ApiError.conflict(
+      existing.username === username ? 'That username is already taken' : 'An account with that email or mobile already exists'
+    );
+  }
 
   const user = new User({
     fullName: (b.fullName && String(b.fullName).trim()) || email.split('@')[0],
     email,
+    username,
     mobile: b.mobile,
     whatsapp: b.whatsapp,
     gender: b.gender,

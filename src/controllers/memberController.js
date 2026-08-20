@@ -24,6 +24,7 @@ import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray, pick } from '../utils/parse.js';
 import { notify } from '../utils/notify.js';
 import { env } from '../config/env.js';
+import { USERNAME_RX } from '../utils/username.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
@@ -228,7 +229,7 @@ export const getMembers = asyncHandler(async (req, res) => {
 });
 
 export const getMember = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id);
+  const user = await User.findById(req.params.memberId);
   if (!user || !user.isActive) throw ApiError.notFound('Member not found');
 
   const [tripsOrganized, connectionCount, recentTrips, joinedInterests, recentPhotos, photoCount, similar, ratingAgg, memberReviews] = await Promise.all([
@@ -341,7 +342,7 @@ export const getMember = asyncHandler(async (req, res) => {
 // only to the member themself, admins, or a member they're connected with
 // (accepted connection) - never to the public or a stranger.
 export const getMemberSelfie = asyncHandler(async (req, res) => {
-  const targetId = req.params.id;
+  const targetId = req.params.memberId;
   const isSelf = String(req.user._id) === String(targetId);
   const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
 
@@ -366,7 +367,7 @@ export const getMemberSelfie = asyncHandler(async (req, res) => {
 
 // POST /members/:id/block - toggle blocking another member.
 export const toggleBlock = asyncHandler(async (req, res) => {
-  const targetId = req.params.id;
+  const targetId = req.params.memberId;
   if (String(targetId) === String(req.user._id)) throw ApiError.badRequest("You can't block yourself");
   const target = await User.findById(targetId);
   if (!target) throw ApiError.notFound('Member not found');
@@ -382,7 +383,7 @@ export const toggleBlock = asyncHandler(async (req, res) => {
 
 // POST /members/:id/report - flag a member's profile/behavior for admin review.
 export const reportUser = asyncHandler(async (req, res) => {
-  const targetId = req.params.id;
+  const targetId = req.params.memberId;
   if (String(targetId) === String(req.user._id)) throw ApiError.badRequest("You can't report yourself");
   const reason = String(req.body.reason || '').trim();
   if (!reason) throw ApiError.badRequest('Please describe the issue');
@@ -416,7 +417,6 @@ const PROFILE_FIELDS = [
 // Handled separately (needs its own regex validation), not blindly assigned.
 const PARTNER_MOBILE_RX = /^[0-9]{10,15}$/;
 const RELATIONSHIP_STATUSES = ['single', 'in_a_relationship', 'married', 'prefer_not_to_say', ''];
-const USERNAME_RX = /^[a-z0-9_.]{3,30}$/;
 
 // Aadhaar front+back and a live selfie are always mandatory; DL + RC (each
 // front+back) are mandatory only for vehicle owners. PAN stays optional and
@@ -805,7 +805,7 @@ const FOLLOW_LIST_FIELDS = 'fullName username avatarUrl city isVerified role';
 
 // POST /members/:id/follow - one-directional, instant, no approval needed.
 export const followMember = asyncHandler(async (req, res) => {
-  const targetId = req.params.id;
+  const targetId = req.params.memberId;
   if (String(targetId) === String(req.user._id)) throw ApiError.badRequest("You can't follow yourself");
   const target = await User.findById(targetId);
   if (!target || !target.isActive) throw ApiError.notFound('Member not found');
@@ -833,7 +833,7 @@ export const followMember = asyncHandler(async (req, res) => {
 
 // DELETE /members/:id/follow
 export const unfollowMember = asyncHandler(async (req, res) => {
-  await Follow.deleteOne({ follower: req.user._id, following: req.params.id });
+  await Follow.deleteOne({ follower: req.user._id, following: req.params.memberId });
   res.json({ success: true, isFollowedByMe: false });
 });
 
@@ -851,12 +851,12 @@ export const getFollowers = asyncHandler(async (req, res) => {
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 24));
 
   const [rows, total] = await Promise.all([
-    Follow.find({ following: req.params.id })
+    Follow.find({ following: req.params.memberId })
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .populate('follower', FOLLOW_LIST_FIELDS),
-    Follow.countDocuments({ following: req.params.id }),
+    Follow.countDocuments({ following: req.params.memberId }),
   ]);
   const users = rows.map((r) => r.follower).filter(Boolean);
   const followMap = await followCountsAndStatus(req.user?._id, users.map((u) => u._id));
@@ -874,12 +874,12 @@ export const getFollowing = asyncHandler(async (req, res) => {
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 24));
 
   const [rows, total] = await Promise.all([
-    Follow.find({ follower: req.params.id })
+    Follow.find({ follower: req.params.memberId })
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .populate('following', FOLLOW_LIST_FIELDS),
-    Follow.countDocuments({ follower: req.params.id }),
+    Follow.countDocuments({ follower: req.params.memberId }),
   ]);
   const users = rows.map((r) => r.following).filter(Boolean);
   const followMap = await followCountsAndStatus(req.user?._id, users.map((u) => u._id));
