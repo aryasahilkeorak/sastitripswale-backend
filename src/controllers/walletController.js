@@ -9,6 +9,7 @@ import ApiError from '../utils/ApiError.js';
 import Withdrawal from '../models/Withdrawal.js';
 import Influencer from '../models/Influencer.js';
 import { saveUpload } from '../utils/uploadStore.js';
+import { notifyAdmins } from '../utils/notify.js';
 
 const MIN_WITHDRAWAL_PAISE = 10000; // ₹100
 const PAN_RX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -77,6 +78,14 @@ export const requestWithdrawal = asyncHandler(async (req, res) => {
   // twice across overlapping pending requests - refunded if admin rejects.
   user.walletBalancePaise = (user.walletBalancePaise || 0) - amountPaise;
   await user.save();
+
+  notifyAdmins({
+    type: 'admin_withdrawal',
+    title: 'New withdrawal request',
+    message: `${user.fullName} requested a withdrawal of ₹${(amountPaise / 100).toFixed(0)}`,
+    meta: { withdrawalId: String(withdrawal._id) },
+    permission: 'wallet',
+  });
 
   res.status(201).json({ success: true, withdrawal, balancePaise: user.walletBalancePaise });
 });

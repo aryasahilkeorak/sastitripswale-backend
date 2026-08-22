@@ -22,7 +22,8 @@ import Influencer from '../models/Influencer.js';
 import Coupon from '../models/Coupon.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { toBool, parseArray, pick } from '../utils/parse.js';
-import { notify } from '../utils/notify.js';
+import { notify, notifyAdmins } from '../utils/notify.js';
+import { ensureCityGeocoded } from '../utils/geocode.js';
 import { env } from '../config/env.js';
 import { USERNAME_RX } from '../utils/username.js';
 
@@ -391,6 +392,13 @@ export const reportUser = asyncHandler(async (req, res) => {
   if (!target) throw ApiError.notFound('Member not found');
 
   const report = await Report.create({ reporter: req.user._id, reportedUser: targetId, reason });
+  notifyAdmins({
+    type: 'admin_report',
+    title: 'New member report',
+    message: `${req.user.fullName} reported ${target.fullName}: ${reason.slice(0, 120)}`,
+    meta: { reportId: String(report._id) },
+    permission: 'messages',
+  });
   res.status(201).json({ success: true, reportId: report._id });
 });
 
@@ -496,6 +504,7 @@ export const updateProfile = asyncHandler(async (req, res) => {
   if (files.partnerDoc?.[0]) user.partnerDocUrl = await saveUpload(files.partnerDoc[0], { owner: user._id, kind: 'document' });
 
   await user.save();
+  if (req.body.city !== undefined && user.city) ensureCityGeocoded(user.city, user.state);
   res.json({ success: true, user: user.toPrivateJSON() });
 });
 
@@ -571,6 +580,16 @@ export const completeProfile = asyncHandler(async (req, res) => {
 
   user.profileComplete = true;
   await user.save();
+  if (user.city) ensureCityGeocoded(user.city, user.state);
+  if (uploadedThisRequest.size) {
+    notifyAdmins({
+      type: 'admin_document',
+      title: 'New documents submitted',
+      message: `${user.fullName} submitted ${uploadedThisRequest.size} document(s) for verification`,
+      meta: { userId: String(user._id) },
+      permission: 'users',
+    });
+  }
   res.json({ success: true, user: user.toPrivateJSON() });
 });
 
@@ -582,6 +601,13 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     user: req.user._id,
     docType,
     fileUrl,
+  });
+  notifyAdmins({
+    type: 'admin_document',
+    title: 'New document submitted',
+    message: `${req.user.fullName} submitted a ${docType} document for verification`,
+    meta: { userId: String(req.user._id) },
+    permission: 'users',
   });
   res.status(201).json({ success: true, document: { id: doc._id, docType: doc.docType } });
 });
@@ -607,6 +633,14 @@ export const reuploadDocument = asyncHandler(async (req, res) => {
   doc.verifiedBy = undefined;
   doc.verifiedAt = undefined;
   await doc.save();
+
+  notifyAdmins({
+    type: 'admin_document',
+    title: 'Document resubmitted',
+    message: `${req.user.fullName} resubmitted a previously rejected ${doc.docType} document`,
+    meta: { userId: String(req.user._id) },
+    permission: 'users',
+  });
 
   res.json({ success: true, document: doc });
 });

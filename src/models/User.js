@@ -115,7 +115,9 @@ const userSchema = new Schema(
     membershipPaid: { type: Boolean, default: false },
     membershipPaidAt: { type: Date },
     membershipExpiresAt: { type: Date },
-    membershipDuration: { type: String, enum: ['6m', '1y', ''], default: '' },
+    // 'lifetime' - staff (admin/superadmin) accounts, granted on promotion,
+    // never expires (membershipExpiresAt stays unset for these).
+    membershipDuration: { type: String, enum: ['6m', '1y', 'lifetime', ''], default: '' },
     // Coupon code applied on the payment that (most recently) activated
     // membership - kept on the user itself so admin views don't depend on
     // a Payment record still existing.

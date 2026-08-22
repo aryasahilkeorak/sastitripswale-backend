@@ -17,6 +17,7 @@ import { fetchDestinationPhoto } from '../utils/pexels.js';
 import { estimateTripCost } from '../utils/tripCost.js';
 import { pick } from '../utils/parse.js';
 import { sweepExpiredTrips, deleteTripCascade } from '../utils/tripLifecycle.js';
+import { ensureCityGeocoded } from '../utils/geocode.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 // The "Leaving from"/"Going to" fields are filled by PlaceAutocomplete's
@@ -330,6 +331,7 @@ export const updateTrip = asyncHandler(async (req, res) => {
   Object.assign(trip, payload);
   if (destinationChanged) trip.coverImageUrl = await fetchDestinationPhoto(trip.destination);
   await trip.save();
+  if (payload.status === 'completed') ensureCityGeocoded(trip.destination);
   res.json({ success: true, trip: trip.toJSON() });
 });
 

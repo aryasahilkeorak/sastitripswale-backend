@@ -14,13 +14,14 @@ import referralRoutes from './referralRoutes.js';
 import placesRoutes from './placesRoutes.js';
 import influencerRoutes from './influencerRoutes.js';
 import walletRoutes from './walletRoutes.js';
-import { getPublicStats } from '../controllers/statsController.js';
+import { getPublicStats, getCityStats } from '../controllers/statsController.js';
 import { razorpayEnabled } from '../utils/razorpay.js';
 import { env } from '../config/env.js';
 
 const router = Router();
 
 router.get('/stats', getPublicStats);
+router.get('/stats/cities', getCityStats);
 
 router.get('/health', (req, res) => {
   res.json({

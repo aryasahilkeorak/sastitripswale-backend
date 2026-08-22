@@ -10,6 +10,7 @@ import GroupTrip, { GROUP_VEHICLE_CAPACITY } from '../models/GroupTrip.js';
 import GroupTripInterest from '../models/GroupTripInterest.js';
 import { fetchDestinationPhoto } from '../utils/pexels.js';
 import { pick } from '../utils/parse.js';
+import { ensureCityGeocoded } from '../utils/geocode.js';
 
 const MEMBER_FIELDS = 'fullName username city avatarUrl isVerified vehicleModel';
 
@@ -150,6 +151,7 @@ export const updateGroupTrip = asyncHandler(async (req, res) => {
   Object.assign(groupTrip, payload);
   if (destinationChanged) groupTrip.coverImageUrl = await fetchDestinationPhoto(groupTrip.destination);
   await groupTrip.save();
+  if (payload.status === 'completed') ensureCityGeocoded(groupTrip.destination);
   res.json({ success: true, groupTrip: groupTrip.toJSON() });
 });
 
