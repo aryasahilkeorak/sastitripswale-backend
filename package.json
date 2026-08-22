@@ -14,8 +14,10 @@
     "seed:completed": "node src/utils/seedCompletedTrips.js",
     "backfill:referrals": "node src/utils/backfillReferralCodes.js",
     "backfill:usernames": "node src/utils/backfillUsernames.js",
+    "backfill:adminLifetime": "node src/utils/backfillAdminLifetime.js",
     "backfill:cotraveler": "node src/utils/fixCoTravelerPreference.js",
-    "backfill:verification": "node src/utils/backfillVerificationLevel.js"
+    "backfill:verification": "node src/utils/backfillVerificationLevel.js",
+    "backfill:cityGeo": "node src/utils/backfillCityGeo.js"
   },
   "engines": {
     "node": ">=18"
