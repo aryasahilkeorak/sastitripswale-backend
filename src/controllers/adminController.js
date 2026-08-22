@@ -30,6 +30,7 @@ import Block from '../models/Block.js';
 import MemberReview from '../models/MemberReview.js';
 import PushSubscription from '../models/PushSubscription.js';
 import { notify } from '../utils/notify.js';
+import { ensureCityGeocoded } from '../utils/geocode.js';
 import { recomputeVerification } from '../utils/verification.js';
 import { vehiclesWithStatus } from './memberController.js';
 import { sanitizePermissions, hasPermission } from '../utils/permissions.js';
@@ -165,8 +166,7 @@ export const getUsers = asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
-  // Super admins are managed from the dedicated Admins screen, not this list.
-  const filter = { role: { $ne: 'superadmin' } };
+  const filter = {};
   if (req.query.membershipPaid) filter.membershipPaid = req.query.membershipPaid === 'true';
   if (req.query.verified) filter.isVerified = req.query.verified === 'true';
   if (req.query.gender) filter.gender = req.query.gender;
@@ -315,6 +315,8 @@ export const createAdmin = asyncHandler(async (req, res) => {
     role: 'admin',
     isVerified: true,
     membershipPaid: true,
+    membershipPaidAt: new Date(),
+    membershipDuration: 'lifetime',
     profileComplete: true,
     permissions: sanitizePermissions(req.body.permissions),
   });
@@ -355,6 +357,9 @@ export const updateAdminRole = asyncHandler(async (req, res) => {
   target.role = role;
   if (role !== 'member') {
     target.membershipPaid = true;
+    target.membershipPaidAt = target.membershipPaidAt || new Date();
+    target.membershipDuration = 'lifetime';
+    target.membershipExpiresAt = undefined;
     target.profileComplete = true;
   } else {
     target.refreshTokenHash = undefined; // sign the (now demoted) admin out
@@ -515,6 +520,7 @@ export const updateTripStatus = asyncHandler(async (req, res) => {
     { new: true }
   );
   if (!trip) throw ApiError.notFound('Trip not found');
+  if (trip.status === 'completed') ensureCityGeocoded(trip.destination);
   res.json({ success: true, trip });
 });
 

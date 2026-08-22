@@ -23,6 +23,13 @@ const notificationSchema = new Schema(
         'follow',
         'message_request',
         'influencer',
+        // Admin-facing - only ever sent to admin/superadmin users, via
+        // notifyAdmins() in utils/notify.js.
+        'admin_document',
+        'admin_query',
+        'admin_influencer',
+        'admin_withdrawal',
+        'admin_report',
       ],
       default: 'system',
     },

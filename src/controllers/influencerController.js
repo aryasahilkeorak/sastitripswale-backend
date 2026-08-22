@@ -10,6 +10,7 @@ import Influencer from '../models/Influencer.js';
 import Coupon from '../models/Coupon.js';
 import Commission from '../models/Commission.js';
 import { saveUpload } from '../utils/uploadStore.js';
+import { notifyAdmins } from '../utils/notify.js';
 
 // Sent as flat top-level fields (instagram, facebook, ...) rather than a
 // nested object, since the apply request is multipart/form-data (screenshot
@@ -87,6 +88,13 @@ export const applyInfluencer = asyncHandler(async (req, res) => {
     existing.reviewedBy = undefined;
     existing.reviewedAt = undefined;
     await existing.save();
+    notifyAdmins({
+      type: 'admin_influencer',
+      title: 'New influencer application',
+      message: `${req.user.fullName} re-applied to become an influencer`,
+      meta: { userId: String(req.user._id) },
+      permission: 'influencers',
+    });
     return res.status(201).json({ success: true, influencer: existing });
   }
 
@@ -97,6 +105,13 @@ export const applyInfluencer = asyncHandler(async (req, res) => {
     avgReelViews,
     dashboardScreenshotUrl,
     socialLinks,
+  });
+  notifyAdmins({
+    type: 'admin_influencer',
+    title: 'New influencer application',
+    message: `${req.user.fullName} applied to become an influencer`,
+    meta: { userId: String(req.user._id) },
+    permission: 'influencers',
   });
   res.status(201).json({ success: true, influencer });
 });
