@@ -11,6 +11,7 @@ import User from '../models/User.js';
 import { notify } from '../utils/notify.js';
 import { saveUpload } from '../utils/uploadStore.js';
 import { findUserByIdentifier } from '../utils/findUserByIdentifier.js';
+import { getUnverifiedRequiredDocs } from '../utils/verification.js';
 
 const MEMBER_FIELDS = 'fullName username avatarUrl city isVerified role vehicleType';
 const OWNER_FIELDS = 'fullName avatarUrl isVerified';
@@ -218,6 +219,16 @@ export const requestToJoin = asyncHandler(async (req, res) => {
     club.joinRequests = club.joinRequests.filter((m) => String(m) !== String(req.user._id));
     await club.save();
     return res.json({ success: true, requestStatus: null });
+  }
+
+  if (req.user.role === 'member') {
+    const unverified = await getUnverifiedRequiredDocs(req.user._id, req.user.hasVehicle);
+    if (unverified.length) {
+      throw ApiError.forbidden(
+        "Your documents are still awaiting admin verification - you'll be able to join clubs once they're approved.",
+        'DOCUMENTS_NOT_VERIFIED'
+      );
+    }
   }
 
   club.joinRequests.push(req.user._id);

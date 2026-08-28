@@ -111,6 +111,19 @@ export function assertProdSecrets() {
     console.error('\n[SECURITY] Weak/duplicate secrets in production:', weak.join(', '));
     process.exit(1);
   }
+
+  // Lower-severity than the JWT secrets above, so these warn rather than
+  // hard-exit (unknown here whether Render's env already has them set -
+  // crashing boot on an unverifiable assumption would be worse than the risk
+  // itself). Set real values in the Render dashboard when you get a chance.
+  const softWeak = [];
+  if (env.push.publicKey.startsWith('BK_gLY6DSG4') || env.push.privateKey.startsWith('_qSO7WrwEBbt'))
+    softWeak.push('VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY (still the shared dev default)');
+  if (env.seed.adminPassword === 'Admin@123') softWeak.push('SEED_ADMIN_PASSWORD (still the default - never run the seed script against production with this)');
+  if (softWeak.length) {
+    // eslint-disable-next-line no-console
+    console.warn('\n[SECURITY] Should be rotated in production:', softWeak.join(', '));
+  }
 }
 
 export default env;

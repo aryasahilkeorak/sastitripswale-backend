@@ -8,6 +8,10 @@ const tripInterestSchema = new Schema(
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
     isCouple: { type: Boolean, default: false },
+    // True if the requester paid for this join with a Trip Pass join
+    // credit rather than an active duration membership - lets a rejected
+    // or withdrawn (never-accepted) request refund that credit.
+    creditConsumed: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

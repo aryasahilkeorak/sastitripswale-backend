@@ -10,6 +10,7 @@ import GroupTrip, { GROUP_VEHICLE_CAPACITY } from '../models/GroupTrip.js';
 import GroupTripInterest from '../models/GroupTripInterest.js';
 import { fetchDestinationPhoto } from '../utils/pexels.js';
 import { pick } from '../utils/parse.js';
+import { getUnverifiedRequiredDocs } from '../utils/verification.js';
 import { ensureCityGeocoded } from '../utils/geocode.js';
 
 const MEMBER_FIELDS = 'fullName username city avatarUrl isVerified vehicleModel';
@@ -199,6 +200,15 @@ export const requestToJoinGroup = asyncHandler(async (req, res) => {
   }
 
   // No existing request, or a previously-rejected one -> (re-)request.
+  if (req.user.role === 'member') {
+    const unverified = await getUnverifiedRequiredDocs(req.user._id, req.user.hasVehicle);
+    if (unverified.length) {
+      throw ApiError.forbidden(
+        "Your documents are still awaiting admin verification - you'll be able to join group trips once they're approved.",
+        'DOCUMENTS_NOT_VERIFIED'
+      );
+    }
+  }
   if (existing) {
     existing.status = 'pending';
     await existing.save();

@@ -26,6 +26,7 @@ import { notify, notifyAdmins } from '../utils/notify.js';
 import { ensureCityGeocoded } from '../utils/geocode.js';
 import { env } from '../config/env.js';
 import { USERNAME_RX } from '../utils/username.js';
+import { recomputeVerification } from '../utils/verification.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
@@ -304,6 +305,15 @@ export const getMember = asyncHandler(async (req, res) => {
   const influencerMap = await influencerBadgeMap([user._id]);
   const mutual = await mutualFollowers(req.user?._id, user._id);
 
+  const isSelf = req.user ? String(user._id) === String(req.user._id) : false;
+  // Habit badges (smokes/drinks) are private by default - a viewer only
+  // sees this member's badge if they share the same active habit
+  // themselves, or if they're looking at their own profile. 'No' never
+  // counts as "active", matching getMatchSuggestions' definition above.
+  const isHabitActive = (v) => ['Occasionally', 'Yes'].includes(v);
+  const smokesVisible = isSelf || (Boolean(req.user) && isHabitActive(req.user.smokes) && isHabitActive(user.smokes));
+  const drinksVisible = isSelf || (Boolean(req.user) && isHabitActive(req.user.drinks) && isHabitActive(user.drinks));
+
   res.json({
     success: true,
     member: {
@@ -326,9 +336,11 @@ export const getMember = asyncHandler(async (req, res) => {
       memberReviews,
       suggested,
       connection: statusMap[String(user._id)] || null,
-      isSelf: req.user ? String(user._id) === String(req.user._id) : false,
+      isSelf,
       isBlockedByMe,
-      ...(req.user && String(user._id) === String(req.user._id)
+      ...(smokesVisible ? { smokes: user.smokes || 'No' } : {}),
+      ...(drinksVisible ? { drinks: user.drinks || 'No' } : {}),
+      ...(isSelf
         ? {
             referralCode: user.referralCode || '',
             referralCount: user.referralCount || 0,
@@ -337,6 +349,53 @@ export const getMember = asyncHandler(async (req, res) => {
         : {}),
     },
   });
+});
+
+// GET /members/match-suggestions?interests=a,b&smokes=Yes&drinks=No - live
+// "people like you" preview for the complete-profile / edit-profile forms,
+// matched against whatever the member currently has picked in the form
+// (not yet saved) rather than their stored travelInterests/drinks/smokes.
+// A habit only counts as a match when it's not 'No' - "both don't smoke"
+// isn't a meaningful shared trait the way "both smoke" is.
+export const getMatchSuggestions = asyncHandler(async (req, res) => {
+  const interests = parseArray(req.query.interests).filter(Boolean);
+  const smokes = ['Occasionally', 'Yes'].includes(req.query.smokes) ? req.query.smokes : null;
+  const drinks = ['Occasionally', 'Yes'].includes(req.query.drinks) ? req.query.drinks : null;
+
+  const or = [];
+  if (interests.length) or.push({ travelInterests: { $in: interests } });
+  if (smokes) or.push({ smokes: { $in: ['Occasionally', 'Yes'] } });
+  if (drinks) or.push({ drinks: { $in: ['Occasionally', 'Yes'] } });
+  if (!or.length) return res.json({ success: true, suggestions: [] });
+
+  const candidates = await User.find({
+    _id: { $ne: req.user._id },
+    isActive: true,
+    role: { $in: ['member', 'superadmin'] },
+    isServiceAccount: { $ne: true },
+    $or: or,
+  })
+    .select('fullName username avatarUrl city isVerified travelInterests drinks smokes')
+    .limit(60);
+
+  const suggestions = candidates
+    .map((u) => ({
+      id: u._id,
+      fullName: u.fullName,
+      username: u.username || '',
+      avatarUrl: u.avatarUrl,
+      city: u.city,
+      isVerified: u.isVerified,
+      sharedInterests: u.travelInterests.filter((t) => interests.includes(t)),
+      sharedSmokes: Boolean(smokes && ['Occasionally', 'Yes'].includes(u.smokes)),
+      sharedDrinks: Boolean(drinks && ['Occasionally', 'Yes'].includes(u.drinks)),
+    }))
+    .map((s) => ({ ...s, matchCount: s.sharedInterests.length + (s.sharedSmokes ? 1 : 0) + (s.sharedDrinks ? 1 : 0) }))
+    .filter((s) => s.matchCount > 0)
+    .sort((a, b) => b.matchCount - a.matchCount)
+    .slice(0, 8);
+
+  res.json({ success: true, suggestions });
 });
 
 // GET /members/:id/selfie - the member's live verification photo. Visible
@@ -363,7 +422,9 @@ export const getMemberSelfie = asyncHandler(async (req, res) => {
   const doc = await Document.findOne({ user: targetId, docType: 'selfie' }).sort({ createdAt: -1 });
   if (!doc) throw ApiError.notFound('No verification photo on file');
 
-  res.json({ success: true, url: doc.fileUrl, status: doc.status });
+  // The document _id is only useful to reupload your OWN selfie - no reason
+  // to hand it to someone viewing a connection's photo.
+  res.json({ success: true, url: doc.fileUrl, status: doc.status, id: isSelf ? doc._id : undefined });
 });
 
 // POST /members/:id/block - toggle blocking another member.
@@ -442,6 +503,28 @@ const VEHICLE_DOC_FIELDS = [
 ];
 const OPTIONAL_DOC_FIELDS = [{ field: 'pan', docType: 'pan', side: '', label: 'PAN' }];
 
+// Parses an optional "YYYY-MM-DD" date-of-birth string - an empty value
+// means "cleared", anything else must land in a sane member age range
+// (matches User.age's existing 18-100 bounds).
+function parseDateOfBirth(raw) {
+  if (!raw) return null;
+  const dob = new Date(raw);
+  if (Number.isNaN(dob.getTime())) throw ApiError.badRequest('Enter a valid date of birth');
+  const ageYears = (Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+  if (ageYears < 18 || ageYears > 100) throw ApiError.badRequest('Date of birth must indicate an age between 18 and 100');
+  return dob;
+}
+
+// Applies a parsed date of birth to `user`, deriving `age` from it too -
+// age has no dedicated input anywhere in the UI, so this is what actually
+// keeps it populated (see MemberCard's age display).
+function applyDateOfBirth(user, raw) {
+  user.dateOfBirth = parseDateOfBirth(raw);
+  if (user.dateOfBirth) {
+    user.age = Math.floor((Date.now() - user.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+  }
+}
+
 export const updateProfile = asyncHandler(async (req, res) => {
   const user = req.user;
 
@@ -479,6 +562,7 @@ export const updateProfile = asyncHandler(async (req, res) => {
 
   Object.assign(user, pick(req.body, PROFILE_FIELDS));
   if (req.body.age !== undefined && req.body.age !== '') user.age = Number(req.body.age);
+  if (req.body.dateOfBirth !== undefined) applyDateOfBirth(user, req.body.dateOfBirth);
   if (req.body.vehicleYear !== undefined) user.vehicleYear = req.body.vehicleYear === '' ? undefined : Number(req.body.vehicleYear);
   if (req.body.mileageKmpl !== undefined) user.mileageKmpl = req.body.mileageKmpl === '' ? undefined : Number(req.body.mileageKmpl);
   if (req.body.hasVehicle !== undefined) user.hasVehicle = toBool(req.body.hasVehicle);
@@ -502,6 +586,12 @@ export const updateProfile = asyncHandler(async (req, res) => {
   if (files.avatar?.[0]) user.avatarUrl = await saveUpload(files.avatar[0], { owner: user._id, kind: 'avatar' });
   if (files.cover?.[0]) user.coverUrl = await saveUpload(files.cover[0], { owner: user._id, kind: 'cover' });
   if (files.partnerDoc?.[0]) user.partnerDocUrl = await saveUpload(files.partnerDoc[0], { owner: user._id, kind: 'document' });
+  // Admin/superadmin-only "official" photo - shown in the admin panel and
+  // (for the founder) on the public About page, kept separate from the
+  // member-facing avatar above. Ignored for a plain member.
+  if (files.adminAvatar?.[0] && (user.role === 'admin' || user.role === 'superadmin')) {
+    user.adminAvatarUrl = await saveUpload(files.adminAvatar[0], { owner: user._id, kind: 'avatar' });
+  }
 
   await user.save();
   if (req.body.city !== undefined && user.city) ensureCityGeocoded(user.city, user.state);
@@ -517,6 +607,7 @@ export const completeProfile = asyncHandler(async (req, res) => {
 
   Object.assign(user, pick(b, PROFILE_FIELDS));
   if (b.age !== undefined && b.age !== '') user.age = Number(b.age);
+  if (b.dateOfBirth !== undefined) applyDateOfBirth(user, b.dateOfBirth);
   if (b.hasVehicle !== undefined) user.hasVehicle = toBool(b.hasVehicle);
   if (b.travelInterests !== undefined) user.travelInterests = parseArray(b.travelInterests);
   if (b.emergencyContact !== undefined) user.emergencyContact = b.emergencyContact;
@@ -593,15 +684,29 @@ export const completeProfile = asyncHandler(async (req, res) => {
   res.json({ success: true, user: user.toPrivateJSON() });
 });
 
+// Adds a document the member never submitted in the first place - distinct
+// from reuploadDocument below, which only replaces an existing (rejected)
+// one. Upserts on (user, docType, side) instead of always inserting, so
+// retrying (e.g. a blurry selfie re-taken before admin ever reviews it)
+// doesn't pile up duplicate rows in the admin review queue.
 export const uploadDocument = asyncHandler(async (req, res) => {
   if (!req.file) throw ApiError.badRequest('Document file required');
   const docType = req.body.docType || 'aadhaar';
+  const side = ['front', 'back'].includes(req.body.side) ? req.body.side : '';
   const fileUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'document' });
-  const doc = await Document.create({
-    user: req.user._id,
-    docType,
-    fileUrl,
-  });
+
+  let doc = await Document.findOne({ user: req.user._id, docType, side });
+  if (doc) {
+    doc.fileUrl = fileUrl;
+    doc.status = 'pending';
+    doc.isVerified = false;
+    doc.verifiedBy = undefined;
+    doc.verifiedAt = undefined;
+    await doc.save();
+  } else {
+    doc = await Document.create({ user: req.user._id, docType, side, fileUrl });
+  }
+
   notifyAdmins({
     type: 'admin_document',
     title: 'New document submitted',
@@ -609,7 +714,11 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     meta: { userId: String(req.user._id) },
     permission: 'users',
   });
-  res.status(201).json({ success: true, document: { id: doc._id, docType: doc.docType } });
+  // Only ever matters if this call replaced a previously-verified doc (see
+  // the upsert branch above) - resets the cached tier/badge to match the
+  // fresh 'pending' status instead of leaving it stale until admin re-review.
+  await recomputeVerification(req.user._id);
+  res.status(201).json({ success: true, document: { id: doc._id, docType: doc.docType, side: doc.side } });
 });
 
 // GET /members/documents - my own uploaded ID documents, with review status.
@@ -618,13 +727,17 @@ export const getMyDocuments = asyncHandler(async (req, res) => {
   res.json({ success: true, documents });
 });
 
-// PUT /members/documents/:id - replace the file for a document the admin
-// rejected. Resets it to 'pending' so it goes back into the review queue.
+// PUT /members/documents/:id - replace the file for a pending or rejected
+// document. A verified ID document is locked - once an admin has approved
+// it, re-review has to be requested through a real change (they can't just
+// swap the file on a document already trusted as authentic). The live
+// selfie is the one exception: it's a photo of the person, not an official
+// record, so retaking it (even after verification) is always allowed.
 export const reuploadDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc) throw ApiError.notFound('Document not found');
   if (String(doc.user) !== String(req.user._id)) throw ApiError.forbidden('Not allowed');
-  if (doc.status !== 'rejected') throw ApiError.badRequest('Only a rejected document can be re-uploaded');
+  if (doc.status === 'verified' && doc.docType !== 'selfie') throw ApiError.badRequest('A verified document cannot be replaced');
   if (!req.file) throw ApiError.badRequest('Document file required');
 
   doc.fileUrl = await saveUpload(req.file, { owner: req.user._id, kind: 'document' });
@@ -637,10 +750,11 @@ export const reuploadDocument = asyncHandler(async (req, res) => {
   notifyAdmins({
     type: 'admin_document',
     title: 'Document resubmitted',
-    message: `${req.user.fullName} resubmitted a previously rejected ${doc.docType} document`,
+    message: `${req.user.fullName} resubmitted a ${doc.docType} document`,
     meta: { userId: String(req.user._id) },
     permission: 'users',
   });
+  await recomputeVerification(req.user._id);
 
   res.json({ success: true, document: doc });
 });

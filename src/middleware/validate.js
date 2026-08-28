@@ -53,6 +53,11 @@ export const forgotRules = [
   body('email').trim().isEmail().withMessage('Valid email required').normalizeEmail(),
 ];
 
+export const verifyIdentityRules = [
+  body('email').trim().isEmail().withMessage('Valid email required').normalizeEmail(),
+  body('dateOfBirth').isISO8601().withMessage('Valid date of birth required').toDate(),
+];
+
 export const resetRules = [
   body('token').notEmpty().withMessage('Reset token required'),
   body('password').isLength({ min: 6, max: 128 }).withMessage('Password must be at least 6 characters'),

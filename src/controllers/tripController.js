@@ -281,7 +281,17 @@ export const createTrip = asyncHandler(async (req, res) => {
   if (payload.isCouplesMode === true || payload.isCouplesMode === 'true') assertPartnerInfoOnFile(req.user);
   const trip = new Trip({ ...payload, organizer: req.user._id });
   trip.coverImageUrl = await fetchDestinationPhoto(trip.destination);
+
+  // A Trip Pass host (no active duration membership) spends one host
+  // credit per trip created - requireTripHostAccess already confirmed
+  // they have one. Full members don't touch their credit pool at all.
+  const usingHostCredit = !req.user.hasActiveMembership();
+  if (usingHostCredit) trip.creditConsumed = true;
   await trip.save();
+  if (usingHostCredit) {
+    req.user.hostCredits = Math.max(0, req.user.hostCredits - 1);
+    await req.user.save();
+  }
 
   // Auto-create the trip chat group with the organizer as owner/member.
   await Group.create({
@@ -302,8 +312,11 @@ export const updateTrip = asyncHandler(async (req, res) => {
   const isOwner = String(trip.organizer) === String(req.user._id);
   if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Not allowed');
 
-  const payload = pick(req.body, [...CREATE_FIELDS, 'status', 'filledSeats']);
   const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+  // filledSeats is derived from accepted TripInterest records - only admins
+  // may override it directly (manual correction), never the organizer, who
+  // could otherwise fake a "sold out" trip or overshoot totalSeats.
+  const payload = pick(req.body, [...CREATE_FIELDS, 'status', ...(isAdmin ? ['filledSeats'] : [])]);
 
   // A completed trip's details are history - not editable by its organizer
   // (though they can still revert its status alone, e.g. if it was marked
@@ -345,6 +358,14 @@ export const deleteTrip = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('A completed trip cannot be deleted - it may have photos, reviews, and ratings attached');
   }
 
+  // Refund the host credit if the organizer paid for this trip with one
+  // and nobody has joined yet - covers an honest mistake (wrong dates,
+  // wrong destination) without letting a trip that already gained members
+  // be deleted and "recreated" to farm free credits.
+  if (trip.creditConsumed && (trip.filledSeats || 0) === 0 && isOwner) {
+    await User.updateOne({ _id: trip.organizer }, { $inc: { hostCredits: 1 } });
+  }
+
   await deleteTripCascade(trip);
   res.json({ success: true, message: 'Trip deleted' });
 });
@@ -377,7 +398,12 @@ export const requestToJoin = asyncHandler(async (req, res) => {
   }
 
   // Already pending → withdraw the request (no seats were ever reserved).
+  // Refund the join credit it spent - nothing was ever actually joined.
   if (existing && existing.status === 'pending') {
+    if (existing.creditConsumed) {
+      req.user.joinCredits += 1;
+      await req.user.save();
+    }
     await existing.deleteOne();
     return res.json({
       success: true,
@@ -387,16 +413,34 @@ export const requestToJoin = asyncHandler(async (req, res) => {
     });
   }
 
-  // No existing request, or a previously-rejected one → (re-)request.
+  // No existing request, or a previously-rejected one → (re-)request. This
+  // is the one branch that actually spends a Trip Pass join credit (or
+  // requires an active duration membership), so the access check happens
+  // here rather than as a route-level gate - withdrawing/leaving above
+  // must never be blocked by having 0 credits left.
+  if (!req.user.hasTripJoinAccess()) {
+    throw ApiError.forbidden('An active membership or a trip-joining credit is required', 'TRIP_JOIN_ACCESS_REQUIRED');
+  }
+  if (req.user.role === 'member' && (!req.user.verificationLevel || req.user.verificationLevel === 'none')) {
+    throw ApiError.forbidden('Your profile needs to be admin-verified before you can join trips.', 'VERIFICATION_REQUIRED');
+  }
+
   const isCouple = trip.isCouplesMode;
   if (isCouple) assertPartnerInfoOnFile(req.user);
+
+  const usingJoinCredit = !req.user.hasActiveMembership();
+  if (usingJoinCredit) {
+    req.user.joinCredits = Math.max(0, req.user.joinCredits - 1);
+    await req.user.save();
+  }
 
   if (existing) {
     existing.status = 'pending';
     existing.isCouple = isCouple;
+    existing.creditConsumed = usingJoinCredit;
     await existing.save();
   } else {
-    await TripInterest.create({ trip: trip._id, user: req.user._id, status: 'pending', isCouple });
+    await TripInterest.create({ trip: trip._id, user: req.user._id, status: 'pending', isCouple, creditConsumed: usingJoinCredit });
   }
 
   // Non-blocking side effects.
@@ -456,6 +500,12 @@ export const respondToRequest = asyncHandler(async (req, res) => {
   } else {
     interest.status = 'rejected';
     await interest.save();
+
+    // Declined, not joined - refund the join credit it spent, if any.
+    if (interest.creditConsumed && requester) {
+      requester.joinCredits += 1;
+      await requester.save();
+    }
 
     notify(interest.user, {
       type: 'join_rejected',

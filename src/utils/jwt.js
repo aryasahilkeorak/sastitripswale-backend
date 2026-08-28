@@ -23,8 +23,14 @@ export function signRefreshToken(user) {
   );
 }
 
+// Real access tokens (signAccessToken) never carry a `type` claim - only
+// special-purpose tokens that happen to share this secret (e.g. the 2FA
+// pending token) do. Rejecting any typed payload here stops a 2FA-pending
+// token from being usable as a full session token against protect().
 export function verifyAccessToken(token) {
-  return jwt.verify(token, env.jwt.accessSecret);
+  const payload = jwt.verify(token, env.jwt.accessSecret);
+  if (payload.type) throw new Error('Not a valid access token');
+  return payload;
 }
 
 export function verifyRefreshToken(token) {

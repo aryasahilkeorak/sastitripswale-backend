@@ -37,6 +37,7 @@ router.get('/push/vapid-key', member.getPushPublicKey);
 router.post('/push/subscribe', protect, member.subscribePush);
 router.post('/push/unsubscribe', protect, member.unsubscribePush);
 router.get('/connections', protect, member.getConnections);
+router.get('/match-suggestions', protect, member.getMatchSuggestions);
 router.put(
   '/profile',
   protect,
@@ -44,6 +45,7 @@ router.put(
     { name: 'avatar', maxCount: 1 },
     { name: 'cover', maxCount: 1 },
     { name: 'partnerDoc', maxCount: 1 },
+    { name: 'adminAvatar', maxCount: 1 },
   ]),
   member.updateProfile
 );

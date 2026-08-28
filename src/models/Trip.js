@@ -58,6 +58,11 @@ const tripSchema = new Schema(
       index: true,
     },
     expenses: { type: [expenseSchema], default: [] },
+
+    // True if the organizer paid for this trip with a Trip Pass host
+    // credit rather than an active duration membership - lets deleteTrip
+    // refund that credit when the trip is removed before anyone joined.
+    creditConsumed: { type: Boolean, default: false },
   },
   {
     timestamps: true,
