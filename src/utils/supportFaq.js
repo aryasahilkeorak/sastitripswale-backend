@@ -6,7 +6,7 @@
 export const SUPPORT_FAQ = [
   {
     question: 'How do I join for free?',
-    answer: 'Use a valid coupon code (like FREEJOIN, when active) at checkout for 100% off the membership fee - otherwise membership is ₹99 for 6 months or 1 year.',
+    answer: 'Ask an influencer you follow or someone you know for their referral/coupon code - some can save you up to 100% off the membership fee at checkout, otherwise membership is ₹99 for 6 months or 1 year.',
   },
   {
     question: 'Is my ID/data safe here?',

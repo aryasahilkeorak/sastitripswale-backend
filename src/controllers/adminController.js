@@ -553,6 +553,39 @@ export const getCoupons = asyncHandler(async (req, res) => {
   res.json({ success: true, coupons });
 });
 
+// GET /admin/coupons/:id/usage - every successful payment that redeemed
+// this coupon, with who made it. Reads from Payment (not User.couponUsed,
+// which only ever holds a member's MOST RECENT coupon) so someone who used
+// it once and later paid again without one still shows up here.
+export const getCouponUsage = asyncHandler(async (req, res) => {
+  const coupon = await Coupon.findById(req.params.id);
+  if (!coupon) throw ApiError.notFound('Coupon not found');
+
+  const payments = await Payment.find({ couponUsed: coupon.code, status: 'success' })
+    .sort({ createdAt: -1 })
+    .populate('user', 'fullName username email mobile avatarUrl isActive');
+
+  const usage = payments
+    .filter((p) => p.user)
+    .map((p) => ({
+      paymentId: p._id,
+      user: {
+        id: p.user._id,
+        fullName: p.user.fullName,
+        username: p.user.username || '',
+        email: p.user.email,
+        mobile: p.user.mobile,
+        avatarUrl: p.user.avatarUrl,
+        isActive: p.user.isActive,
+      },
+      amount: p.amount,
+      purpose: p.purpose,
+      usedAt: p.createdAt,
+    }));
+
+  res.json({ success: true, coupon: { code: coupon.code, usedCount: coupon.usedCount, maxUses: coupon.maxUses }, usage });
+});
+
 export const createCoupon = asyncHandler(async (req, res) => {
   const code = String(req.body.code || '').toUpperCase().trim();
   if (!code) throw ApiError.badRequest('Coupon code required');
@@ -917,7 +950,14 @@ export const deleteContactMessage = asyncHandler(async (req, res) => {
 // Site-wide settings (super-admin only)
 export const getSettings = asyncHandler(async (req, res) => {
   const settings = await Setting.getSingleton();
-  res.json({ success: true, settings: { referralEnabled: settings.referralEnabled, referralTiers: settings.referralTiers } });
+  res.json({
+    success: true,
+    settings: {
+      referralEnabled: settings.referralEnabled,
+      referralDiscountPct: settings.referralDiscountPct,
+      referralTiers: settings.referralTiers,
+    },
+  });
 });
 
 export const toggleReferrals = asyncHandler(async (req, res) => {
@@ -927,9 +967,25 @@ export const toggleReferrals = asyncHandler(async (req, res) => {
   res.json({ success: true, referralEnabled: settings.referralEnabled });
 });
 
+// PATCH /admin/settings/referral-discount - set the flat discount % a new
+// member gets on their first membership payment when they signed up with
+// someone else's referral code. Body: { referralDiscountPct: 0-100 }.
+export const updateReferralDiscount = asyncHandler(async (req, res) => {
+  const pct = Number(req.body.referralDiscountPct);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    throw ApiError.badRequest('Referral discount must be a percentage between 0 and 100');
+  }
+  const settings = await Setting.getSingleton();
+  settings.referralDiscountPct = Math.round(pct * 100) / 100;
+  await settings.save();
+  res.json({ success: true, referralDiscountPct: settings.referralDiscountPct });
+});
+
 // PATCH /admin/settings/referral-tiers - replace the whole reward ladder.
-// Body: { tiers: [{ from, to (nullable), amountPaise }, ...] }, sorted by
+// Body: { tiers: [{ from, to (nullable), rewardPct }, ...] }, sorted by
 // `from` ascending, no gaps required but ranges shouldn't overlap.
+// rewardPct is the referrer's cut of what the company actually collects
+// from that referred member's payment - not a flat rupee amount.
 export const updateReferralTiers = asyncHandler(async (req, res) => {
   const raw = Array.isArray(req.body.tiers) ? req.body.tiers : [];
   if (!raw.length) throw ApiError.badRequest('At least one tier is required');
@@ -938,7 +994,7 @@ export const updateReferralTiers = asyncHandler(async (req, res) => {
     .map((t) => ({
       from: Math.max(1, Math.round(Number(t.from))),
       to: t.to === null || t.to === undefined || t.to === '' ? null : Math.max(1, Math.round(Number(t.to))),
-      amountPaise: Math.max(0, Math.round(Number(t.amountPaise) || 0)),
+      rewardPct: Math.min(100, Math.max(0, Number(t.rewardPct) || 0)),
     }))
     .sort((a, b) => a.from - b.from);
 

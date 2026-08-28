@@ -23,6 +23,10 @@ const notificationSchema = new Schema(
         'follow',
         'message_request',
         'influencer',
+        // Sent repeatedly (see utils/documentReminders.js) to a member who
+        // still hasn't completed their profile - stops once profileComplete
+        // flips true, since the sweep query itself excludes them then.
+        'profile_reminder',
         // Admin-facing - only ever sent to admin/superadmin users, via
         // notifyAdmins() in utils/notify.js.
         'admin_document',

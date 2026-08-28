@@ -38,6 +38,7 @@ router.delete('/reviews/:id', perm('reviews'), admin.deleteReview);
 
 // Coupons
 router.get('/coupons', perm('coupons'), admin.getCoupons);
+router.get('/coupons/:id/usage', perm('coupons'), admin.getCouponUsage);
 router.post('/coupons', perm('coupons'), admin.createCoupon);
 router.put('/coupons/:id', perm('coupons'), admin.updateCoupon);
 router.patch('/coupons/:id', perm('coupons'), admin.toggleCoupon);
@@ -74,6 +75,7 @@ router.delete('/reports/:id', perm('messages'), admin.deleteReport);
 // Site-wide settings (super-admin only)
 router.get('/settings', superOnly, admin.getSettings);
 router.patch('/settings/referrals', superOnly, admin.toggleReferrals);
+router.patch('/settings/referral-discount', superOnly, admin.updateReferralDiscount);
 router.patch('/settings/referral-tiers', superOnly, admin.updateReferralTiers);
 
 export default router;

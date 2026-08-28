@@ -18,6 +18,7 @@ import { saveUpload } from '../utils/uploadStore.js';
 import { findUserByIdentifier } from '../utils/findUserByIdentifier.js';
 import { getSupportBotReply, FALLBACK_REPLY } from '../utils/supportBot.js';
 import { matchFaqAnswer } from '../utils/supportFaq.js';
+import { containsProfanity } from '../utils/profanityFilter.js';
 
 const isId = (v) => mongoose.isValidObjectId(v);
 const MEMBER_FIELDS = 'fullName avatarUrl city isVerified role isServiceAccount';
@@ -450,6 +451,9 @@ export const sendMessage = asyncHandler(async (req, res) => {
   const text = String(req.body.text || '').trim();
   if (!text) throw ApiError.badRequest('Message cannot be empty');
   if (text.length > 2000) throw ApiError.badRequest('Message too long');
+  if (containsProfanity(text)) {
+    throw ApiError.badRequest('Your message contains language that isn\'t allowed here - please rephrase it.', 'PROFANITY_BLOCKED');
+  }
 
   const group = await Group.findById(req.params.groupId);
   if (!group) throw ApiError.notFound('Group not found');

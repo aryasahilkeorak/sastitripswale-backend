@@ -57,12 +57,23 @@ const userSchema = new Schema(
 
     gender: { type: String, enum: ['Male', 'Female', 'Prefer not to say', ''], default: '' },
     age: { type: Number, min: 18, max: 100 },
+    // Optional - collected only so a member who's lost access to their
+    // email can still verify their identity for a password reset (see
+    // authController.verifyIdentityForReset). Not shown publicly.
+    dateOfBirth: { type: Date, default: null },
     city: { type: String, trim: true, maxlength: 80 },
     state: { type: String, trim: true, maxlength: 80 },
     profession: { type: String, trim: true, maxlength: 100 },
     bio: { type: String, maxlength: 1000 },
     avatarUrl: { type: String, default: '' },
     coverUrl: { type: String, default: '' },
+    // Separate photo for admin/superadmin accounts, shown only in the admin
+    // panel (AdminLayout header, Admin Profile) and as the public "Founder"
+    // photo on the About page - deliberately distinct from `avatarUrl`,
+    // which is this person's personal photo everywhere they appear as a
+    // regular member (directory, chat, trips). Admin/superadmin only;
+    // ignored for plain members. Falls back to `avatarUrl` when unset.
+    adminAvatarUrl: { type: String, default: '' },
     // Social handles only (no full URLs) - the frontend prefixes the
     // platform's base URL when rendering a clickable link.
     instagram: { type: String, trim: true },
@@ -87,8 +98,11 @@ const userSchema = new Schema(
     fuelType: { type: String, enum: ['Petrol', 'Diesel', 'CNG', 'Electric', 'Hybrid', ''], default: '' },
     vehicles: { type: [vehicleSchema], default: [] },
     travelInterests: { type: [String], default: [] },
-    drinks: { type: String, default: 'No' },
-    smokes: { type: String, default: 'No' },
+    // Lifestyle habits - shown on the public profile (like travelInterests)
+    // so co-travelers can match on them, e.g. deciding whether a trip/room
+    // is a comfortable fit. 'No' is the only value NOT counted as a match.
+    drinks: { type: String, enum: ['No', 'Occasionally', 'Yes', ''], default: 'No' },
+    smokes: { type: String, enum: ['No', 'Occasionally', 'Yes', ''], default: 'No' },
 
     // Who the user wants to travel with (drives membership pricing).
     // 'male' = only male, 'female' = only female, 'both' = male + female.
@@ -123,6 +137,15 @@ const userSchema = new Schema(
     // a Payment record still existing.
     couponUsed: { type: String, trim: true, uppercase: true, default: '' },
 
+    // Trip Pass (pay-per-trip) credits - an alternative to the duration
+    // membership above, for members who just want a handful of trips.
+    // Two independent pools: hostCredits gates creating a trip, joinCredits
+    // gates joining one. Buying a pack tops these up (see utils/plans.js);
+    // hasTripHostAccess()/hasTripJoinAccess() below combine these with the
+    // duration membership so either kind of plan unlocks trip actions.
+    hostCredits: { type: Number, default: 0, min: 0 },
+    joinCredits: { type: Number, default: 0, min: 0 },
+
     // Referral system - every user gets their own code; referredBy/referralCount
     // track who invited whom. See utils/referral.js for code generation.
     referralCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
@@ -136,6 +159,10 @@ const userSchema = new Schema(
     // far - determines which tier in Setting.referralTiers their next
     // converted referral falls into (see paymentController.activateMembership).
     referralRewardsGiven: { type: Number, default: 0, min: 0 },
+    // Set once THIS user (as a referred member) has actually used their
+    // Setting.referralDiscountPct discount on a paid activation - the
+    // discount only ever applies to their first membership payment.
+    referralDiscountUsed: { type: Boolean, default: false },
 
     // Wallet - a running balance in paise, credited from referral rewards
     // and (for influencers) commission payouts; debited when a withdrawal
@@ -199,6 +226,17 @@ userSchema.methods.hasActiveMembership = function hasActiveMembership() {
   return true;
 };
 
+// Trip-level access: the unlimited duration membership above always
+// qualifies; otherwise a Trip Pass member needs an actual credit left in
+// the relevant pool. Used to gate hosting/joining independently of each
+// other - a user can run out of one and still have the other.
+userSchema.methods.hasTripHostAccess = function hasTripHostAccess() {
+  return this.hasActiveMembership() || this.hostCredits > 0;
+};
+userSchema.methods.hasTripJoinAccess = function hasTripJoinAccess() {
+  return this.hasActiveMembership() || this.joinCredits > 0;
+};
+
 // Public projection - safe to send to ANY client (directory listings, etc.)
 userSchema.methods.toPublicJSON = function toPublicJSON() {
   return {
@@ -214,6 +252,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     bio: this.bio,
     avatarUrl: this.avatarUrl,
     coverUrl: this.coverUrl || '',
+    adminAvatarUrl: this.adminAvatarUrl || '',
     instagram: this.instagram,
     facebook: this.facebook,
     twitter: this.twitter,
@@ -223,6 +262,9 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     vehicleType: this.vehicleType,
     vehicleModel: this.vehicleModel,
     travelInterests: this.travelInterests,
+    // drinks/smokes are deliberately NOT in this projection - they're only
+    // safe to reveal to the profile owner or a viewer who shares the same
+    // habit (see getMember in memberController.js), never to any client.
     coTravelerPreference: this.coTravelerPreference,
     isVerified: this.isVerified,
     verificationLevel: this.verificationLevel || 'none',
@@ -234,18 +276,21 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
 userSchema.methods.toPrivateJSON = function toPrivateJSON() {
   return {
     ...this.toPublicJSON(),
+    drinks: this.drinks || 'No',
+    smokes: this.smokes || 'No',
     email: this.email,
     mobile: this.mobile,
     whatsapp: this.whatsapp,
+    dateOfBirth: this.dateOfBirth || null,
     permissions: this.permissions || [],
-    drinks: this.drinks,
-    smokes: this.smokes,
     membershipPaid: this.membershipPaid,
     membershipPaidAt: this.membershipPaidAt,
     membershipExpiresAt: this.membershipExpiresAt,
     membershipDuration: this.membershipDuration,
     membershipActive: this.hasActiveMembership(),
     couponUsed: this.couponUsed || '',
+    hostCredits: this.hostCredits || 0,
+    joinCredits: this.joinCredits || 0,
     referralCode: this.referralCode || '',
     referralCount: this.referralCount || 0,
     walletBalancePaise: this.walletBalancePaise || 0,
