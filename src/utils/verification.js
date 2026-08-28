@@ -51,4 +51,34 @@ export async function recomputeVerification(userId) {
   return { level, previous, changed: previous !== level };
 }
 
+// Which of a member's REQUIRED documents (matches completeProfile's own
+// requirement set - PAN is excluded, since it stays optional there) are not
+// yet verified: never uploaded, still pending review, or rejected. Used to
+// gate trip/club participation on admin approval, not just submission -
+// deliberately separate from the NORMAL_REQUIRED/isVerified tier above,
+// which additionally demands PAN and would otherwise permanently block
+// anyone who never uploaded that optional document.
+const PROFILE_REQUIRED = [
+  ['selfie', ''],
+  ['aadhaar', 'front'],
+  ['aadhaar', 'back'],
+];
+const PROFILE_REQUIRED_VEHICLE = [
+  ['driving_license', 'front'],
+  ['driving_license', 'back'],
+  ['rc', 'front'],
+  ['rc', 'back'],
+];
+
+export async function getUnverifiedRequiredDocs(userId, hasVehicle) {
+  const docs = await Document.find({ user: userId }).select('docType side status');
+  const specs = hasVehicle ? [...PROFILE_REQUIRED, ...PROFILE_REQUIRED_VEHICLE] : PROFILE_REQUIRED;
+  return specs
+    .filter(([docType, side]) => {
+      const doc = docs.find((d) => d.docType === docType && d.side === side);
+      return !doc || doc.status !== 'verified';
+    })
+    .map(([docType, side]) => ({ docType, side }));
+}
+
 export default recomputeVerification;
