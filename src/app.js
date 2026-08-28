@@ -13,6 +13,7 @@ import { env } from './config/env.js';
 import apiRoutes from './routes/index.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import { generalLimiter } from './middleware/rateLimiters.js';
+import { attachUserFromQuery } from './middleware/auth.js';
 import { getFile } from './controllers/fileController.js';
 
 const app = express();
@@ -66,8 +67,13 @@ app.use(compression());
 app.use(morgan(env.isProd ? 'combined' : 'dev'));
 
 // --- Uploaded files (stored in MongoDB) - outside the rate limiter so image
-//     heavy pages don't get throttled. ---
-app.get('/api/files/:id', getFile);
+//     heavy pages don't get throttled. attachUserFromQuery is optional-auth
+//     (never rejects) and also accepts ?token=, since this URL is loaded
+//     directly by <img>/<a> tags that can't send an Authorization header -
+//     public images (avatars, trip/gallery photos) still load for logged-out
+//     visitors either way; getFile itself enforces ownership for sensitive
+//     kinds (ID documents, wallet QR codes). ---
+app.get('/api/files/:id', attachUserFromQuery, getFile);
 
 // --- API ---
 app.use('/api', generalLimiter, apiRoutes);
