@@ -24,6 +24,15 @@ export function basePriceRupees(preference, duration) {
   return PLAN_PRICES[tier][normalizeDuration(duration)];
 }
 
+// The 4 duration-plan combinations, as keys like 'single_6m' - used to key
+// per-plan settings (e.g. referral discounts) by plan rather than by a
+// single flat value for everyone.
+export const PLAN_KEYS = ['single_6m', 'single_1y', 'both_6m', 'both_1y'];
+
+export function planKey(preference, duration) {
+  return `${tierForPreference(preference)}_${normalizeDuration(duration)}`;
+}
+
 export function planLabel(preference, duration) {
   const who = preference === 'both' ? 'Male + Female' : preference === 'female' ? 'Only Female' : 'Only Male';
   const dur = normalizeDuration(duration) === '1y' ? '1 year' : '6 months';
@@ -65,6 +74,8 @@ export function tripPackLabel(tier) {
 export default {
   PLAN_PRICES,
   DURATIONS,
+  PLAN_KEYS,
+  planKey,
   basePriceRupees,
   planLabel,
   durationMs,
