@@ -23,6 +23,9 @@ const notificationSchema = new Schema(
         'follow',
         'message_request',
         'influencer',
+        // A like/comment/repost on one of this user's Gallery photos - see
+        // `meta.action` for which ('like'|'comment'|'repost').
+        'photo',
         // Sent repeatedly (see utils/documentReminders.js) to a member who
         // still hasn't completed their profile - stops once profileComplete
         // flips true, since the sweep query itself excludes them then.

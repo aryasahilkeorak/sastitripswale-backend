@@ -35,17 +35,29 @@ import { materializeAccount } from '../utils/pendingSignup.js';
 import {
   basePriceRupees,
   planLabel,
+  planKey,
   durationMs,
   normalizeDuration,
   normalizeTripPackTier,
   tripPackPriceRupees,
 } from '../utils/plans.js';
 
+// The discount % a coupon actually gives for `plan` - for a plain coupon
+// that's just its flat `discountPct`, but an influencer's coupon can carry a
+// different rate per plan (see Coupon.discountPcts), so it always resolves
+// through that first.
+function couponDiscountPct(coupon, plan) {
+  if (!coupon) return 0;
+  if (coupon.influencer && coupon.discountPcts) return coupon.discountPcts[plan] ?? coupon.discountPct ?? 0;
+  return coupon.discountPct || 0;
+}
+
 // Discount a base rupee price by an optional coupon → paise.
-function priceWithCoupon(baseRupees, coupon) {
+function priceWithCoupon(baseRupees, coupon, plan) {
   let finalRupees = baseRupees;
   if (coupon) {
-    if (coupon.discountPct) finalRupees = baseRupees * (1 - coupon.discountPct / 100);
+    const pct = couponDiscountPct(coupon, plan);
+    if (pct) finalRupees = baseRupees * (1 - pct / 100);
     else if (coupon.discountAmt) finalRupees = baseRupees - coupon.discountAmt;
   }
   finalRupees = Math.max(0, finalRupees);
@@ -94,11 +106,12 @@ async function referrerFor(actor) {
 }
 
 // Whether `actor` currently has an unused referral discount to spend, and
-// if so, how much.
-function referralDiscountPct(referrerInfo, settings) {
+// if so, how much - specific to the plan (`planKey`, e.g. 'both_1y') they're
+// actually buying, since each plan carries its own discount percentage.
+function referralDiscountPct(referrerInfo, settings, plan) {
   if (!referrerInfo || referrerInfo.alreadyUsed) return 0;
-  if (!settings.referralEnabled || !settings.referralDiscountPct) return 0;
-  return settings.referralDiscountPct;
+  if (!settings.referralEnabled) return 0;
+  return settings.referralDiscounts?.[plan] || 0;
 }
 
 // As above, but additionally requires `submittedCode` to match the
@@ -107,10 +120,10 @@ function referralDiscountPct(referrerInfo, settings) {
 // or neither. Returns the referrer's username too, so the UI can credit
 // them by name ("you used username's referral code") rather than just
 // echoing the code back.
-async function referralDiscountForCode(actor, submittedCode, settings) {
+async function referralDiscountForCode(actor, submittedCode, settings, plan) {
   if (!submittedCode) return null;
   const referrerInfo = await referrerFor(actor);
-  const pct = referralDiscountPct(referrerInfo, settings);
+  const pct = referralDiscountPct(referrerInfo, settings, plan);
   if (!pct) return null;
   if (referrerInfo.referrer.referralCode !== submittedCode) return null;
   return { pct, referrerUsername: referrerInfo.referrer.username || '' };
@@ -144,8 +157,10 @@ async function activateMembership(user, payment) {
     // amount to take a cut of.
     if (coupon?.influencer && payment.amount > 0) {
       const influencer = await Influencer.findOne({ _id: coupon.influencer, status: 'approved' });
-      if (influencer && influencer.commissionPct > 0) {
-        const amountPaise = Math.round(payment.amount * (influencer.commissionPct / 100));
+      const plan = planKey(payment.planPreference, payment.planDuration);
+      const commissionPct = influencer?.commissionPcts?.[plan] ?? influencer?.commissionPct ?? 0;
+      if (influencer && commissionPct > 0) {
+        const amountPaise = Math.round(payment.amount * (commissionPct / 100));
         if (amountPaise > 0) {
           await Commission.create({
             influencer: influencer._id,
@@ -267,16 +282,17 @@ export const validateCoupon = asyncHandler(async (req, res) => {
   const duration = normalizeDuration(req.body.duration);
   const preference = preferenceFor(req, actor);
   const base = basePriceRupees(preference, duration);
+  const plan = planKey(preference, duration);
 
   if (!code) throw ApiError.badRequest('Coupon code required');
   const coupon = await Coupon.findOne({ code });
 
   if (coupon && coupon.isUsable()) {
-    const finalPaise = priceWithCoupon(base, coupon);
+    const finalPaise = priceWithCoupon(base, coupon, plan);
     return res.json({
       success: true,
       coupon: code,
-      discountPct: coupon.discountPct,
+      discountPct: couponDiscountPct(coupon, plan),
       discountAmt: coupon.discountAmt,
       baseRupees: base,
       finalAmountPaise: finalPaise,
@@ -290,7 +306,7 @@ export const validateCoupon = asyncHandler(async (req, res) => {
   // member? If so it still "applies" here, as their automatic referral
   // discount rather than a Coupon record.
   const settings = await Setting.getSingleton();
-  const referral = await referralDiscountForCode(actor, code, settings);
+  const referral = await referralDiscountForCode(actor, code, settings, plan);
   if (referral) {
     const finalPaise = priceWithPct(base, referral.pct);
     return res.json({
@@ -390,6 +406,7 @@ export const createOrderHandler = asyncHandler(async (req, res) => {
   const duration = normalizeDuration(req.body.duration);
   const preference = preferenceFor(req, actor);
   const base = basePriceRupees(preference, duration);
+  const plan = planKey(preference, duration);
   const planFields = { planDuration: duration, planPreference: preference };
 
   const settings = await Setting.getSingleton();
@@ -402,7 +419,7 @@ export const createOrderHandler = asyncHandler(async (req, res) => {
     if (!coupon || !coupon.isUsable()) {
       // Not a real coupon - fall back to checking whether it's actually
       // this member's own referral discount instead.
-      const referral = await referralDiscountForCode(actor, couponCode, settings);
+      const referral = await referralDiscountForCode(actor, couponCode, settings, plan);
       if (!referral) throw ApiError.badRequest('Invalid or expired coupon');
       referralPct = referral.pct;
       coupon = null;
@@ -412,10 +429,10 @@ export const createOrderHandler = asyncHandler(async (req, res) => {
     // No coupon code submitted at all - still auto-apply an unused
     // referral discount, so it's never missed just because the checkout
     // step didn't re-send the code.
-    referralPct = referralDiscountPct(await referrerFor(actor), settings) || null;
+    referralPct = referralDiscountPct(await referrerFor(actor), settings, plan) || null;
   }
 
-  const finalPaise = referralPct ? priceWithPct(base, referralPct) : priceWithCoupon(base, coupon);
+  const finalPaise = referralPct ? priceWithPct(base, referralPct) : priceWithCoupon(base, coupon, plan);
   const referralDiscountApplied = referralPct != null;
 
   const identity = actor.user

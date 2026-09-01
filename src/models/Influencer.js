@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { PLAN_KEYS } from '../utils/plans.js';
 
 const { Schema } = mongoose;
 
@@ -15,8 +16,9 @@ const videoSchema = new Schema(
 
 // A member's application/status in the Influencer/Promoter program. Once
 // approved, the linked Coupon (Coupon.influencer -> this doc) carries the
-// customer-facing discount; `commissionPct` here is the influencer's own
-// cut, kept separate since it must never be exposed publicly.
+// customer-facing discount; `commissionPct`/`commissionPcts` here are the
+// influencer's own cut, kept separate since they must never be exposed
+// publicly.
 const influencerSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
@@ -38,7 +40,22 @@ const influencerSchema = new Schema(
     },
     reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: { type: Date },
+    // The headline figure shown in public/summary views (the highest of
+    // `commissionPcts`' per-plan values) - actual commission accrual always
+    // resolves through `commissionPcts` first, see
+    // paymentController.activateMembership().
     commissionPct: { type: Number, min: 0, max: 100, default: 0 },
+    // Per-plan commission %, e.g. a bigger cut on the ₹499 plan than the
+    // ₹199 one - policy caps each 10-30% (enforced in adminController.js).
+    commissionPcts: {
+      type: new Schema(
+        PLAN_KEYS.reduce((paths, key) => {
+          paths[key] = { type: Number, min: 0, max: 100 };
+          return paths;
+        }, {}),
+        { _id: false }
+      ),
+    },
     totalEarnedPaise: { type: Number, default: 0, min: 0 },
     videos: { type: [videoSchema], default: [] },
   },

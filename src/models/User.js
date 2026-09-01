@@ -160,7 +160,7 @@ const userSchema = new Schema(
     // converted referral falls into (see paymentController.activateMembership).
     referralRewardsGiven: { type: Number, default: 0, min: 0 },
     // Set once THIS user (as a referred member) has actually used their
-    // Setting.referralDiscountPct discount on a paid activation - the
+    // Setting.referralDiscounts discount on a paid activation - the
     // discount only ever applies to their first membership payment.
     referralDiscountUsed: { type: Boolean, default: false },
 

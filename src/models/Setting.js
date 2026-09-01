@@ -3,6 +3,7 @@
 //  Add new site-wide flags here as needed.
 // ============================================================
 import mongoose from 'mongoose';
+import { PLAN_KEYS } from '../utils/plans.js';
 
 const { Schema } = mongoose;
 
@@ -20,16 +21,28 @@ const referralTierSchema = new Schema(
   { _id: false }
 );
 
+// One discount percentage per membership plan (utils/plans.js PLAN_KEYS,
+// e.g. 'single_6m', 'both_1y') - built dynamically off PLAN_KEYS so the two
+// stay in sync.
+const referralDiscountsSchema = new Schema(
+  PLAN_KEYS.reduce((paths, key) => {
+    paths[key] = { type: Number, default: 10, min: 0, max: 100 };
+    return paths;
+  }, {}),
+  { _id: false }
+);
+
 const settingSchema = new Schema(
   {
     key: { type: String, required: true, unique: true, default: 'global' },
     referralEnabled: { type: Boolean, default: true },
     // Automatic discount off the membership price for a new member's first
     // payment, applied when they signed up with someone else's referral
-    // code (see paymentController.referralDiscountFor). One flat percentage
-    // for everyone, regardless of who referred them or how many referrals
-    // that referrer already has.
-    referralDiscountPct: { type: Number, default: 10, min: 0, max: 100 },
+    // code (see paymentController.referralDiscountFor) - a separate
+    // percentage per membership plan, so e.g. the ₹499 plan can carry a
+    // different discount than the ₹199 one. Same for everyone regardless of
+    // who referred them or how many referrals that referrer already has.
+    referralDiscounts: { type: referralDiscountsSchema, default: () => ({}) },
     // Credited to the referrer's wallet once their referred member's
     // membership is actually paid (not at bare signup, to avoid rewarding
     // referrals that never convert) - a percentage of that payment (what
@@ -49,9 +62,34 @@ const settingSchema = new Schema(
   { timestamps: true }
 );
 
+// Set once a legacy single-percentage document (pre-per-plan discounts) has
+// been migrated, so the extra raw-collection check below only runs once per
+// server process rather than on every call.
+let referralDiscountsMigrated = false;
+
 settingSchema.statics.getSingleton = async function getSingleton() {
   let doc = await this.findOne({ key: 'global' });
   if (!doc) doc = await this.create({ key: 'global' });
+
+  if (!referralDiscountsMigrated) {
+    // Carry forward an old flat `referralDiscountPct` (from before discounts
+    // were per-plan) as the starting value for every plan, so upgrading
+    // doesn't silently reset everyone's discount back to the schema default.
+    const raw = await this.collection.findOne(
+      { key: 'global' },
+      { projection: { referralDiscounts: 1, referralDiscountPct: 1 } }
+    );
+    if (raw && raw.referralDiscounts === undefined && typeof raw.referralDiscountPct === 'number') {
+      const legacyPct = raw.referralDiscountPct;
+      doc.referralDiscounts = PLAN_KEYS.reduce((acc, key) => {
+        acc[key] = legacyPct;
+        return acc;
+      }, {});
+      await doc.save();
+    }
+    referralDiscountsMigrated = true;
+  }
+
   return doc;
 };
 

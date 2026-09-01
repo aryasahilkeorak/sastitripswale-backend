@@ -43,7 +43,7 @@ const paymentSchema = new Schema(
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },
     couponUsed: { type: String },
-    // True when `amount` reflects Setting.referralDiscountPct auto-applied
+    // True when `amount` reflects Setting.referralDiscounts auto-applied
     // for a referred member's first payment, rather than a real Coupon -
     // see paymentController.referralDiscountFor. Lets activateMembership
     // mark User.referralDiscountUsed only once the payment actually succeeds.

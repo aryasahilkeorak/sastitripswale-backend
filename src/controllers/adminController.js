@@ -34,6 +34,7 @@ import { ensureCityGeocoded } from '../utils/geocode.js';
 import { recomputeVerification } from '../utils/verification.js';
 import { vehiclesWithStatus } from './memberController.js';
 import { sanitizePermissions, hasPermission } from '../utils/permissions.js';
+import { PLAN_KEYS } from '../utils/plans.js';
 
 const DOC_TYPE_LABEL = { aadhaar: 'Aadhaar', pan: 'PAN', voter_id: 'Voter ID', driving_license: 'Driving Licence', rc: 'RC', selfie: 'live selfie photo' };
 const TIER_LABEL = { verified: 'Verified', vehicle_verified: 'Verified Vehicle Owner' };
@@ -633,6 +634,18 @@ export const deleteCoupon = asyncHandler(async (req, res) => {
 
 // ── Influencer/Promoter program ──────────────────────────────────────────
 
+// Reads a { single_6m, single_1y, both_6m, both_1y } body into a clamped,
+// fully-populated plan → pct map - any missing/invalid key falls back to
+// `fallback` rather than rejecting the whole request, since the admin UI
+// always submits all 4 plans together.
+function parsePlanPcts(raw, { min, max, fallback }) {
+  return PLAN_KEYS.reduce((out, key) => {
+    const v = Number(raw?.[key]);
+    out[key] = Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
+    return out;
+  }, {});
+}
+
 export const getInfluencers = asyncHandler(async (req, res) => {
   const influencers = await Influencer.find({})
     .sort({ createdAt: -1 })
@@ -665,12 +678,14 @@ export const respondToInfluencer = asyncHandler(async (req, res) => {
     return res.json({ success: true, influencer });
   }
 
-  // Approve: issue (or reuse) their personal coupon. Commission is set
-  // manually by the admin based on the reach info collected at application
-  // time (followers, avg reel views, dashboard screenshot, socials) -
-  // policy caps it 10-30%.
-  const discountPct = Math.max(0, Math.min(100, Number(req.body.discountPct) || 10));
-  const commissionPct = Math.max(10, Math.min(30, Number(req.body.commissionPct) || 10));
+  // Approve: issue (or reuse) their personal coupon. Discount and commission
+  // are set manually by the admin, per membership plan, based on the reach
+  // info collected at application time (followers, avg reel views,
+  // dashboard screenshot, socials) - policy caps commission 10-30%.
+  const discountPcts = parsePlanPcts(req.body.discountPcts, { min: 0, max: 100, fallback: 10 });
+  const commissionPcts = parsePlanPcts(req.body.commissionPcts, { min: 10, max: 30, fallback: 10 });
+  const discountPct = Math.max(...Object.values(discountPcts));
+  const commissionPct = Math.max(...Object.values(commissionPcts));
   const handle = (influencer.user.username || influencer.user.fullName || 'promo').replace(/[^a-zA-Z0-9]/g, '');
   const suggestedCode = `${handle}${discountPct}`.toUpperCase();
   const code = String(req.body.couponCode || suggestedCode).toUpperCase().trim();
@@ -680,16 +695,18 @@ export const respondToInfluencer = asyncHandler(async (req, res) => {
   if (!coupon) {
     const codeTaken = await Coupon.findOne({ code, influencer: { $ne: influencer._id } });
     if (codeTaken) throw ApiError.conflict('That coupon code is already in use');
-    coupon = await Coupon.create({ code, discountPct, influencer: influencer._id });
+    coupon = await Coupon.create({ code, discountPct, discountPcts, influencer: influencer._id });
   } else {
     coupon.code = code;
     coupon.discountPct = discountPct;
+    coupon.discountPcts = discountPcts;
     coupon.isActive = true;
     await coupon.save();
   }
 
   influencer.status = 'approved';
   influencer.commissionPct = commissionPct;
+  influencer.commissionPcts = commissionPcts;
   influencer.reviewedBy = req.user._id;
   influencer.reviewedAt = new Date();
   await influencer.save();
@@ -697,25 +714,31 @@ export const respondToInfluencer = asyncHandler(async (req, res) => {
   notify(influencer.user._id, {
     type: 'influencer',
     title: "You're an approved influencer!",
-    message: `Your coupon code is ${code} - ${discountPct}% off for customers, ${commissionPct}% commission for you.`,
+    message: `Your coupon code is ${code} - up to ${discountPct}% off for customers, up to ${commissionPct}% commission for you (varies by plan).`,
   });
 
   res.json({ success: true, influencer, coupon });
 });
 
-// PUT /admin/influencers/:id - edit an approved influencer's discount%/commission%.
+// PUT /admin/influencers/:id - edit an approved influencer's per-plan
+// discount%/commission%. Body: { discountPcts, commissionPcts } - each a
+// { single_6m, single_1y, both_6m, both_1y } map.
 export const updateInfluencer = asyncHandler(async (req, res) => {
   const influencer = await Influencer.findById(req.params.id);
   if (!influencer) throw ApiError.notFound('Influencer not found');
 
-  if (req.body.commissionPct !== undefined) {
-    influencer.commissionPct = Math.max(10, Math.min(30, Number(req.body.commissionPct) || 10));
+  if (req.body.commissionPcts !== undefined) {
+    const commissionPcts = parsePlanPcts(req.body.commissionPcts, { min: 10, max: 30, fallback: 10 });
+    influencer.commissionPcts = commissionPcts;
+    influencer.commissionPct = Math.max(...Object.values(commissionPcts));
   }
   await influencer.save();
 
   const coupon = await Coupon.findOne({ influencer: influencer._id });
-  if (coupon && req.body.discountPct !== undefined) {
-    coupon.discountPct = Math.max(0, Math.min(100, Number(req.body.discountPct) || 0));
+  if (coupon && req.body.discountPcts !== undefined) {
+    const discountPcts = parsePlanPcts(req.body.discountPcts, { min: 0, max: 100, fallback: 0 });
+    coupon.discountPcts = discountPcts;
+    coupon.discountPct = Math.max(...Object.values(discountPcts));
     await coupon.save();
   }
 
@@ -954,7 +977,7 @@ export const getSettings = asyncHandler(async (req, res) => {
     success: true,
     settings: {
       referralEnabled: settings.referralEnabled,
-      referralDiscountPct: settings.referralDiscountPct,
+      referralDiscounts: settings.referralDiscounts.toObject(),
       referralTiers: settings.referralTiers,
     },
   });
@@ -967,18 +990,27 @@ export const toggleReferrals = asyncHandler(async (req, res) => {
   res.json({ success: true, referralEnabled: settings.referralEnabled });
 });
 
-// PATCH /admin/settings/referral-discount - set the flat discount % a new
-// member gets on their first membership payment when they signed up with
-// someone else's referral code. Body: { referralDiscountPct: 0-100 }.
+// PATCH /admin/settings/referral-discount - set the discount % a new member
+// gets on their first membership payment when they signed up with someone
+// else's referral code, per membership plan. Body:
+// { referralDiscounts: { single_6m, single_1y, both_6m, both_1y } }.
 export const updateReferralDiscount = asyncHandler(async (req, res) => {
-  const pct = Number(req.body.referralDiscountPct);
-  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-    throw ApiError.badRequest('Referral discount must be a percentage between 0 and 100');
+  const raw = req.body.referralDiscounts;
+  if (!raw || typeof raw !== 'object') {
+    throw ApiError.badRequest('referralDiscounts is required');
+  }
+  const referralDiscounts = {};
+  for (const key of PLAN_KEYS) {
+    const pct = Number(raw[key]);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      throw ApiError.badRequest(`Referral discount for "${key}" must be a percentage between 0 and 100`);
+    }
+    referralDiscounts[key] = Math.round(pct * 100) / 100;
   }
   const settings = await Setting.getSingleton();
-  settings.referralDiscountPct = Math.round(pct * 100) / 100;
+  settings.referralDiscounts = referralDiscounts;
   await settings.save();
-  res.json({ success: true, referralDiscountPct: settings.referralDiscountPct });
+  res.json({ success: true, referralDiscounts: settings.referralDiscounts.toObject() });
 });
 
 // PATCH /admin/settings/referral-tiers - replace the whole reward ladder.
