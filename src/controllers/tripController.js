@@ -18,6 +18,8 @@ import { estimateTripCost } from '../utils/tripCost.js';
 import { pick } from '../utils/parse.js';
 import { sweepExpiredTrips, deleteTripCascade } from '../utils/tripLifecycle.js';
 import { ensureCityGeocoded } from '../utils/geocode.js';
+import { withLikedByMe } from '../utils/photoViewerContext.js';
+import { GALLERY_USER_FIELDS, REPOST_POPULATE } from '../utils/galleryPopulate.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 // The "Leaving from"/"Going to" fields are filled by PlaceAutocomplete's
@@ -171,7 +173,10 @@ export const getTrip = asyncHandler(async (req, res) => {
     TripInterest.find({ trip: trip._id, status: 'accepted' })
       .populate('user', memberSelect)
       .limit(12),
-    Gallery.find({ trip: trip._id }).populate('user', 'fullName avatarUrl').sort({ createdAt: -1 }),
+    Gallery.find({ trip: trip._id })
+      .populate('user', GALLERY_USER_FIELDS)
+      .populate(REPOST_POPULATE)
+      .sort({ createdAt: -1 }),
     Review.find({ trip: trip._id }).populate('user', 'fullName avatarUrl').sort({ createdAt: -1 }),
   ]);
 
@@ -217,7 +222,7 @@ export const getTrip = asyncHandler(async (req, res) => {
       requestStatus,
       members: accepted.filter((i) => i.user).map(withCoupleFlag),
       pendingRequests,
-      photos,
+      photos: await withLikedByMe(photos, req.user?._id),
       reviews,
       canReview,
       myReview,
@@ -544,9 +549,11 @@ export const uploadTripPhoto = asyncHandler(async (req, res) => {
     trip: trip._id,
     photoUrl,
     caption: req.body.caption || trip.destination,
+    location: req.body.location || '',
     category: req.body.category || trip.tripType || 'group',
   });
-  res.status(201).json({ success: true, photo });
+  await photo.populate('user', GALLERY_USER_FIELDS);
+  res.status(201).json({ success: true, photo: { ...photo.toObject(), likedByMe: false } });
 });
 
 export const createTripReview = asyncHandler(async (req, res) => {

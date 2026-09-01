@@ -7,6 +7,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import Group from '../models/Group.js';
 import Message from '../models/Message.js';
+import Gallery from '../models/Gallery.js';
 import Trip from '../models/Trip.js';
 import TripInterest from '../models/TripInterest.js';
 import User from '../models/User.js';
@@ -422,6 +423,14 @@ export const removeMember = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
+// Nested populate for a shared-photo message - kept here so getMessages and
+// sendMessage attribute the photo identically.
+const SHARED_PHOTO_POPULATE = {
+  path: 'sharedPhoto',
+  select: 'photoUrl caption user',
+  populate: { path: 'user', select: 'fullName username' },
+};
+
 // GET /chat/groups/:groupId/messages?after=ISO - list messages (members only).
 export const getMessages = asyncHandler(async (req, res) => {
   const group = await Group.findById(req.params.groupId);
@@ -434,12 +443,14 @@ export const getMessages = asyncHandler(async (req, res) => {
     messages = await Message.find({ group: group._id, createdAt: { $gt: after } })
       .sort({ createdAt: 1 })
       .limit(100)
-      .populate('sender', 'fullName avatarUrl role');
+      .populate('sender', 'fullName avatarUrl role')
+      .populate(SHARED_PHOTO_POPULATE);
   } else {
     const recent = await Message.find({ group: group._id })
       .sort({ createdAt: -1 })
       .limit(50)
-      .populate('sender', 'fullName avatarUrl role');
+      .populate('sender', 'fullName avatarUrl role')
+      .populate(SHARED_PHOTO_POPULATE);
     messages = recent.reverse();
   }
 
@@ -447,12 +458,22 @@ export const getMessages = asyncHandler(async (req, res) => {
 });
 
 // POST /chat/groups/:groupId/messages - send a message (members only).
+// Body is normally just { text }, but a message can also (or instead) share
+// a Gallery photo via { sharedPhotoId } - see the Lightbox's share action.
 export const sendMessage = asyncHandler(async (req, res) => {
   const text = String(req.body.text || '').trim();
-  if (!text) throw ApiError.badRequest('Message cannot be empty');
+  const sharedPhotoId = req.body.sharedPhotoId ? String(req.body.sharedPhotoId) : null;
+  if (!text && !sharedPhotoId) throw ApiError.badRequest('Message cannot be empty');
   if (text.length > 2000) throw ApiError.badRequest('Message too long');
-  if (containsProfanity(text)) {
+  if (text && containsProfanity(text)) {
     throw ApiError.badRequest('Your message contains language that isn\'t allowed here - please rephrase it.', 'PROFANITY_BLOCKED');
+  }
+
+  let sharedPhoto = null;
+  if (sharedPhotoId) {
+    if (!mongoose.isValidObjectId(sharedPhotoId)) throw ApiError.badRequest('Invalid photo');
+    sharedPhoto = await Gallery.findById(sharedPhotoId).select('_id');
+    if (!sharedPhoto) throw ApiError.badRequest('Photo not found');
   }
 
   const group = await Group.findById(req.params.groupId);
@@ -466,19 +487,22 @@ export const sendMessage = asyncHandler(async (req, res) => {
     group.dmStatus = 'accepted';
   }
 
-  const message = await Message.create({ group: group._id, sender: req.user._id, text });
+  const message = await Message.create({ group: group._id, sender: req.user._id, text, sharedPhoto: sharedPhoto?._id });
   group.lastMessageAt = message.createdAt;
-  group.lastMessageText = text.slice(0, 120);
+  group.lastMessageText = text ? text.slice(0, 120) : 'Shared a photo';
   await group.save();
   await message.populate('sender', 'fullName avatarUrl role');
+  await message.populate(SHARED_PHOTO_POPULATE);
 
   // AI auto-reply - only when someone messages the designated support
-  // account. Never triggers when the sender IS that service account, so a
-  // human replying as it (to take over the conversation) is never talked
-  // over by the bot - but any other sender, including the founder's own
-  // superadmin account, gets a reply like anyone else would.
+  // account with actual text (a pure photo share has nothing for the
+  // FAQ/AI matcher to work with). Never triggers when the sender IS that
+  // service account, so a human replying as it (to take over the
+  // conversation) is never talked over by the bot - but any other sender,
+  // including the founder's own superadmin account, gets a reply like
+  // anyone else would.
   let autoReply = null;
-  if (group.type === 'dm' && !req.user.isServiceAccount) {
+  if (text && group.type === 'dm' && !req.user.isServiceAccount) {
     const otherId = group.members.find((m) => String(m) !== String(req.user._id));
     const other = otherId ? await User.findById(otherId).select('isServiceAccount') : null;
 

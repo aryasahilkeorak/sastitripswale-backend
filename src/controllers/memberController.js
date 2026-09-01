@@ -27,6 +27,8 @@ import { ensureCityGeocoded } from '../utils/geocode.js';
 import { env } from '../config/env.js';
 import { USERNAME_RX } from '../utils/username.js';
 import { recomputeVerification } from '../utils/verification.js';
+import { withLikedByMe } from '../utils/photoViewerContext.js';
+import { REPOST_POPULATE } from '../utils/galleryPopulate.js';
 
 const rx = (s) => new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
@@ -254,7 +256,11 @@ export const getMember = asyncHandler(async (req, res) => {
         select: 'origin viaStops destination coverImageUrl startDate endDate budgetPerHead filledSeats vehicleType status organizer',
         populate: { path: 'organizer', select: 'fullName username vehicleModel avatarUrl isVerified' },
       }),
-    Gallery.find({ user: user._id }).sort({ createdAt: -1 }).limit(12).select('photoUrl caption category'),
+    Gallery.find({ user: user._id })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .select('photoUrl caption category location likesCount commentsCount repostsCount repostOf createdAt')
+      .populate(REPOST_POPULATE),
     Gallery.countDocuments({ user: user._id }),
     // Other travelers who share at least one travel interest - used to
     // power the "Suggested travelers" rail on the member's profile page.
@@ -304,6 +310,7 @@ export const getMember = asyncHandler(async (req, res) => {
   const followMap = await followCountsAndStatus(req.user?._id, [user._id]);
   const influencerMap = await influencerBadgeMap([user._id]);
   const mutual = await mutualFollowers(req.user?._id, user._id);
+  const recentPhotosWithLikes = await withLikedByMe(recentPhotos, req.user?._id);
 
   const isSelf = req.user ? String(user._id) === String(req.user._id) : false;
   // Habit badges (smokes/drinks) are private by default - a viewer only
@@ -332,7 +339,7 @@ export const getMember = asyncHandler(async (req, res) => {
       },
       recentTrips,
       joinedTrips,
-      recentPhotos,
+      recentPhotos: recentPhotosWithLikes,
       memberReviews,
       suggested,
       connection: statusMap[String(user._id)] || null,
